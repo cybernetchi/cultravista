@@ -1,147 +1,104 @@
-import { ChevronLeft, Share2, Pencil, MessageSquare, MoreVertical, Calendar, MapPin, Box, Image } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Scan } from "@/types/scan";
-import { IframeViewer } from "@/components/web/IframeViewer";
-import { cn } from "@/lib/utils";
+// Mobile capture detail — a read-only view of a finished capture on the phone.
+// The viewer + bilingual metadata + hotspot tour are reused wholesale from the
+// public ExhibitView (the same responsive, r3f-backed renderer used at
+// /exhibit/:slug), so mobile stays in parity with the web/exhibit experience
+// without re-implementing the 3D story. Heavy curation (editing, hotspot
+// authoring, cropping, publishing) stays on desktop — we only overlay a back
+// button, a share affordance for already-published exhibits, and a hint.
 import { useState } from "react";
+import { ChevronLeft, Share2, Monitor, Loader2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import { ExhibitView } from "@/components/exhibit/ExhibitView";
+import { AnnotationService } from "@/services/annotationService";
+import { Capture } from "@/services/captureService";
+import { toast } from "sonner";
 
 interface ScanDetailViewProps {
-  scan: Scan;
+  capture: Capture;
   onBack: () => void;
-  onEdit: () => void;
-  onAnnotate: () => void;
 }
 
-export function ScanDetailView({ scan, onBack, onEdit, onAnnotate }: ScanDetailViewProps) {
-  const [viewMode, setViewMode] = useState<"image" | "3d">(scan.splatUrl ? "3d" : "image");
-  
-  // Debug logging
-  console.log('ScanDetailView scan data:', scan);
-  console.log('splatUrl:', scan.splatUrl);
-  console.log('viewMode:', viewMode);
-  
-  const formattedDate = scan.createdAt.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
+export function ScanDetailView({ capture, onBack }: ScanDetailViewProps) {
+  const [sharing, setSharing] = useState(false);
+
+  // Hotspots for this capture (drives ExhibitView's markers + guided tour).
+  const { data: annotations = [], isLoading: annotationsLoading } = useQuery({
+    queryKey: ["annotations", capture.id],
+    queryFn: async () => {
+      const res = await AnnotationService.getAnnotations(capture.id);
+      if (!res.success) throw new Error(res.error);
+      return res.data ?? [];
+    },
   });
 
-  const formattedTime = scan.createdAt.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  });
+  const canShare = capture.published && !!capture.slug;
+
+  const handleShare = async () => {
+    if (!capture.slug) return;
+    const url = `${window.location.origin}/exhibit/${capture.slug}`;
+    // Prefer the native share sheet on phones; fall back to clipboard.
+    if (navigator.share) {
+      try {
+        setSharing(true);
+        await navigator.share({ title: capture.title, url });
+      } catch {
+        /* user cancelled — no-op */
+      } finally {
+        setSharing(false);
+      }
+    } else {
+      await navigator.clipboard.writeText(url);
+      toast.success("Exhibit link copied");
+    }
+  };
 
   return (
-    <div className="flex-1 flex flex-col animate-fade-in">
-      {/* Image viewer */}
-      <div className="relative flex-1 min-h-[50vh]">
-        {/* View mode toggle */}
-        {scan.splatUrl && (
-          <div className="absolute top-16 left-4 z-30 flex items-center bg-background/80 backdrop-blur-sm rounded-lg p-1">
-            <Button
-              variant={viewMode === "3d" ? "default" : "ghost"}
-              size="sm"
-              className="h-7 px-3 gap-1.5"
-              onClick={() => setViewMode("3d")}
-            >
-              <Box className="w-3.5 h-3.5" />
-              3D
-            </Button>
-            <Button
-              variant={viewMode === "image" ? "default" : "ghost"}
-              size="sm"
-              className="h-7 px-3 gap-1.5"
-              onClick={() => setViewMode("image")}
-            >
-              <Image className="w-3.5 h-3.5" />
-              Image
-            </Button>
-          </div>
-        )}
+    <div className="fixed inset-0 z-40 bg-background animate-fade-in">
+      {/* Viewer + metadata + tour, reused from the public exhibit renderer. */}
+      <ExhibitView capture={capture} annotations={annotations} />
 
-        {viewMode === "3d" && scan.splatUrl ? (
-          <IframeViewer 
-            src={scan.splatUrl} 
-            title={scan.title}
-            className="w-full h-full"
-          />
-        ) : (
-          <>
-            <img
-              src={scan.thumbnail}
-              alt={scan.title}
-              className="w-full h-full object-cover"
-            />
-            
-            {/* Top gradient */}
-            <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-background/80 to-transparent" />
-            
-            {/* Bottom gradient */}
-            <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-background to-transparent" />
-          </>
-        )}
-        
-        {/* Top controls */}
-        <div className="absolute top-2 left-0 right-0 flex items-center justify-between px-4 z-30">
-          <Button variant="icon" size="icon" onClick={onBack}>
-            <ChevronLeft className="w-6 h-6" />
-          </Button>
-          <div className="flex items-center gap-2">
-            <Button variant="icon" size="icon">
-              <Share2 className="w-5 h-5" />
-            </Button>
-            <Button variant="icon" size="icon">
-              <MoreVertical className="w-5 h-5" />
-            </Button>
-          </div>
+      {/* Loading hint while hotspots resolve (viewer already renders underneath). */}
+      {annotationsLoading && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50">
+          <span className="flex items-center gap-1.5 rounded-full bg-card/85 backdrop-blur-sm border border-border px-3 py-1 text-xs text-muted-foreground">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Loading story…
+          </span>
         </div>
+      )}
+
+      {/* Top-left controls (ExhibitView keeps the language toggle top-right). */}
+      <div className="absolute top-3 left-3 z-50 flex items-center gap-2">
+        <Button
+          variant="icon"
+          size="icon"
+          onClick={onBack}
+          className="bg-card/85 backdrop-blur-sm border border-border"
+          aria-label="Back to library"
+        >
+          <ChevronLeft className="w-6 h-6" />
+        </Button>
+        {canShare && (
+          <Button
+            variant="icon"
+            size="icon"
+            onClick={handleShare}
+            disabled={sharing}
+            className="bg-card/85 backdrop-blur-sm border border-border"
+            aria-label="Share exhibit"
+          >
+            <Share2 className="w-5 h-5" />
+          </Button>
+        )}
       </div>
 
-      {/* Info panel */}
-      <div className="bg-background px-5 py-6 space-y-4 pb-28">
-        {/* Title and author */}
-        <div>
-          <h1 className="text-2xl font-bold text-foreground mb-1">
-            {scan.title}
-          </h1>
-          <p className="text-primary font-medium">{scan.authorHandle}</p>
-        </div>
-
-        {/* Metadata */}
-        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-          <div className="flex items-center gap-1.5">
-            <Calendar className="w-4 h-4" />
-            <span>{formattedDate} · {formattedTime}</span>
-          </div>
-          {scan.location && (
-            <div className="flex items-center gap-1.5">
-              <MapPin className="w-4 h-4" />
-              <span>{scan.location}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Action buttons */}
-        <div className="flex gap-3 pt-2">
-          <Button
-            variant="action"
-            className="flex-1 h-14"
-            onClick={onEdit}
-          >
-            <Pencil className="w-5 h-5 mr-2" />
-            Edit
-          </Button>
-          <Button
-            variant="action"
-            className="flex-1 h-14"
-            onClick={onAnnotate}
-          >
-            <MessageSquare className="w-5 h-5 mr-2" />
-            Annotate
-          </Button>
-        </div>
+      {/* Desktop-only tooling hint. */}
+      <div className="absolute bottom-3 left-3 z-40">
+        <span className="flex items-center gap-1.5 rounded-full bg-card/85 backdrop-blur-sm border border-border px-3 py-1 text-xs text-muted-foreground">
+          <Monitor className="w-3.5 h-3.5" />
+          Edit &amp; curate on desktop
+        </span>
       </div>
     </div>
   );

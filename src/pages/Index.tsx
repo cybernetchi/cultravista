@@ -4,20 +4,21 @@ import { MobileFrame } from "@/components/layout/MobileFrame";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { LibraryView } from "@/components/library/LibraryView";
 import { ScanDetailView } from "@/components/detail/ScanDetailView";
-import { EditView } from "@/components/edit/EditView";
-import { AnnotateView } from "@/components/annotate/AnnotateView";
 import { CaptureView } from "@/components/capture/CaptureView";
 import { ProfileView } from "@/components/profile/ProfileView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { WebLayout } from "@/components/web/WebLayout";
-import { Scan, ViewMode } from "@/types/scan";
-import { toast } from "sonner";
+import { Capture } from "@/services/captureService";
+
+// Mobile view modes. Editing/annotation/cropping are desktop-only tools (see
+// PR6 scope), so the mobile flow is just: browse → view → capture.
+type MobileViewMode = "library" | "detail" | "capture";
 
 const Index = () => {
   const isMobile = useIsMobile();
   const [activeTab, setActiveTab] = useState("library");
-  const [viewMode, setViewMode] = useState<ViewMode>("library");
-  const [selectedScan, setSelectedScan] = useState<Scan | null>(null);
+  const [viewMode, setViewMode] = useState<MobileViewMode>("library");
+  const [selectedCapture, setSelectedCapture] = useState<Capture | null>(null);
 
   // Use web layout for desktop
   if (!isMobile) {
@@ -25,8 +26,8 @@ const Index = () => {
   }
 
   // Mobile layout
-  const handleSelectScan = (scan: Scan) => {
-    setSelectedScan(scan);
+  const handleSelectCapture = (capture: Capture) => {
+    setSelectedCapture(capture);
     setViewMode("detail");
   };
 
@@ -34,25 +35,9 @@ const Index = () => {
     setViewMode("capture");
   };
 
-  const handleBack = () => {
-    if (viewMode === "edit" || viewMode === "annotate") {
-      setViewMode("detail");
-    } else if (viewMode === "detail") {
-      setViewMode("library");
-      setSelectedScan(null);
-    } else {
-      setViewMode("library");
-    }
-  };
-
-  const handleSave = () => {
-    toast.success("Changes saved successfully!");
-    setViewMode("detail");
-  };
-
-  const handleCaptureComplete = () => {
-    toast.success("Scan saved to library!");
+  const handleBackToLibrary = () => {
     setViewMode("library");
+    setSelectedCapture(null);
   };
 
   const handleTabChange = (tab: string) => {
@@ -61,7 +46,7 @@ const Index = () => {
     } else {
       setActiveTab(tab);
       setViewMode("library");
-      setSelectedScan(null);
+      setSelectedCapture(null);
     }
   };
 
@@ -70,38 +55,21 @@ const Index = () => {
       return (
         <CaptureView
           onClose={() => setViewMode("library")}
-          onComplete={handleCaptureComplete}
+          onComplete={handleBackToLibrary}
         />
       );
     }
 
     if (activeTab === "library") {
-      switch (viewMode) {
-        case "detail":
-          return selectedScan ? (
-            <ScanDetailView
-              scan={selectedScan}
-              onBack={handleBack}
-              onEdit={() => setViewMode("edit")}
-              onAnnotate={() => setViewMode("annotate")}
-            />
-          ) : null;
-        case "edit":
-          return selectedScan ? (
-            <EditView scan={selectedScan} onBack={handleBack} onSave={handleSave} />
-          ) : null;
-        case "annotate":
-          return selectedScan ? (
-            <AnnotateView scan={selectedScan} onBack={handleBack} onSave={handleSave} />
-          ) : null;
-        default:
-          return (
-            <LibraryView
-              onSelectScan={handleSelectScan}
-              onStartCapture={handleStartCapture}
-            />
-          );
+      if (viewMode === "detail" && selectedCapture) {
+        return <ScanDetailView capture={selectedCapture} onBack={handleBackToLibrary} />;
       }
+      return (
+        <LibraryView
+          onSelectCapture={handleSelectCapture}
+          onStartCapture={handleStartCapture}
+        />
+      );
     }
 
     if (activeTab === "profile") {
@@ -114,13 +82,13 @@ const Index = () => {
 
     return (
       <LibraryView
-        onSelectScan={handleSelectScan}
+        onSelectCapture={handleSelectCapture}
         onStartCapture={handleStartCapture}
       />
     );
   };
 
-  const showBottomNav = viewMode === "library" && activeTab !== "capture";
+  const showBottomNav = viewMode === "library";
 
   return (
     <MobileFrame>
