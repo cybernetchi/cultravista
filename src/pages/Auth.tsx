@@ -82,9 +82,10 @@ export default function Auth() {
 
         <CardContent className="space-y-4">
           <Tabs value={mode} onValueChange={(v) => { setMode(v as Mode); setError(null); setInfo(null); }}>
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="signin">Sign in</TabsTrigger>
-              <TabsTrigger value="signup">Sign up</TabsTrigger>
+            {/* h-12 list / h-10 triggers: comfortable tap targets on phones */}
+            <TabsList className="grid w-full grid-cols-2 h-12">
+              <TabsTrigger value="signin" className="h-10">Sign in</TabsTrigger>
+              <TabsTrigger value="signup" className="h-10">Sign up</TabsTrigger>
             </TabsList>
 
             <TabsContent value={mode} className="mt-4">
@@ -95,6 +96,7 @@ export default function Auth() {
                     id="email"
                     type="email"
                     autoComplete="email"
+                    className="h-11"
                     placeholder="you@example.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -109,6 +111,7 @@ export default function Auth() {
                     id="password"
                     type="password"
                     autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                    className="h-11"
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -129,7 +132,7 @@ export default function Auth() {
                   </p>
                 )}
 
-                <Button type="submit" className="w-full" disabled={submitting}>
+                <Button type="submit" className="w-full h-11" disabled={submitting}>
                   {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   {mode === "signin" ? "Sign in" : "Create account"}
                 </Button>
@@ -149,7 +152,7 @@ export default function Auth() {
           <Button
             type="button"
             variant="outline"
-            className="w-full"
+            className="w-full h-11"
             onClick={handleGoogle}
             disabled={submitting}
           >
