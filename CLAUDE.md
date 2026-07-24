@@ -1,6 +1,6 @@
-# CLAUDE.md — CultraVista (cultravista_web)
+# CLAUDE.md — CultraVista (cultravista)
 
-> Project context and engineering plan for Claude Code. Place this file at the **root of the `cultravista_web` repo**. Run `/init` once if you want Claude Code to extend it, but keep the sections below intact.
+> Project context and engineering plan for Claude Code. Place this file at the **root of the `cultravista` repo**. Run `/init` once if you want Claude Code to extend it, but keep the sections below intact.
 
 ## 1. What this project is
 
