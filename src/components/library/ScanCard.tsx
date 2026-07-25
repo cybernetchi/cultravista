@@ -43,10 +43,13 @@ export function ScanCard({ capture, onClick, index }: ScanCardProps) {
       {/* Completed captures show a snapshot of the actual 3D model (same as the
           web library); processing/failed ones fall back to the source photo. */}
       {isClickable && deliverySplatUrl(capture) ? (
+        // NB: sized box, not "absolute inset-0" — SplatThumbnail's root is
+        // position:relative, and Tailwind resolves relative+absolute in favour
+        // of relative, so an inset-based size collapses to zero height.
         <SplatThumbnail
           splatUrl={deliverySplatUrl(capture)!}
           fallbackImage={capture.thumbnail || "/placeholder.svg"}
-          className="absolute inset-0"
+          className="w-full h-full"
         />
       ) : (
         <img
