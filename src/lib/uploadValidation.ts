@@ -75,6 +75,34 @@ export async function validateModelFile(file: File): Promise<ModelValidationResu
     if (!isPly) {
       return { ok: false, error: "This doesn't look like a PLY file (missing 'ply' header)." };
     }
+
+    // The PLY header is always ASCII, ending at "end_header". Inspect it to
+    // catch formats the conversion Lambda can't parse, *before* the user sits
+    // through a long upload + failed conversion:
+    //  - SuperSplat/PlayCanvas "Compressed PLY" uses chunked packed_* fields.
+    //  - Mesh/point-cloud PLYs (e.g. Polycam mesh export) lack gaussian
+    //    properties like f_dc_0 entirely.
+    const headerBytes = await file.slice(0, 16 * 1024).arrayBuffer();
+    const header = new TextDecoder("latin1").decode(headerBytes);
+    const headerEnd = header.indexOf("end_header");
+    // Header longer than 16KB is pathological; let the server decide then.
+    if (headerEnd !== -1) {
+      const h = header.slice(0, headerEnd);
+      if (h.includes("packed_position") || h.includes("element chunk")) {
+        return {
+          ok: false,
+          error:
+            "Compressed PLY isn't supported. In SuperSplat, export as \"Splat file\" or uncompressed \"PLY\" instead.",
+        };
+      }
+      if (!h.includes("f_dc_0")) {
+        return {
+          ok: false,
+          error:
+            "This PLY doesn't contain Gaussian Splat data (it looks like a mesh or point cloud). Export a 3D Gaussian Splat PLY instead.",
+        };
+      }
+    }
   } else if (file.size % SPLAT_ROW_BYTES !== 0) {
     return {
       ok: false,
