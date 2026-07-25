@@ -3,12 +3,15 @@
 // (camera or gallery), we upload to KIRI via `useKiriUpload`, then
 // `useProcessingFlow` polls KIRI + the Lambda PLY→splat conversion. No KIRI
 // logic is duplicated here — it all lives in src/hooks/useCapture.ts.
+// PR8 adds a third source: a ready-made .ply/.splat file exported from another
+// app (Scaniverse, Polycam, Luma, SuperSplat), uploaded straight to S3.
 import { useState, useRef, useCallback, useEffect } from "react";
-import { X, Camera, Images, Check, Trash2, FileVideo, RotateCcw, AlertTriangle } from "lucide-react";
+import { X, Camera, Images, Check, Trash2, FileVideo, RotateCcw, AlertTriangle, Box, Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
-import { useKiriUpload, useProcessingFlow } from "@/hooks/useCapture";
+import { useKiriUpload, useProcessingFlow, useDirectModelUpload, useUploadedCapturePoll } from "@/hooks/useCapture";
+import { validateModelFile, formatBytes, type ModelKind } from "@/lib/uploadValidation";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -38,21 +41,36 @@ export function CaptureView({ onClose, onComplete, onBusyChange }: CaptureViewPr
   const [error, setError] = useState<string | null>(null);
   const [serialize, setSerialize] = useState<string | null>(null);
   const [captureId, setCaptureId] = useState<string | null>(null);
+  // PR8: a staged .ply/.splat file. Mutually exclusive with photos/video —
+  // its presence switches the whole flow to the direct-upload path.
+  const [modelFile, setModelFile] = useState<{ file: File; kind: ModelKind } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
-  // Two inputs: `capture="environment"` opens the rear camera directly on a
-  // phone; the gallery input allows multi-select for a photo set.
+  // Three inputs: `capture="environment"` opens the rear camera directly on a
+  // phone; the gallery input allows multi-select for a photo set; the model
+  // input picks a single .ply/.splat file.
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+  const modelInputRef = useRef<HTMLInputElement>(null);
 
   const kiriUploadMutation = useKiriUpload();
+  const directUploadMutation = useDirectModelUpload();
+  const isModelRun = !!modelFile;
 
   // Drives the KIRI status poll + fire-and-forget Lambda conversion, exactly as
-  // WebCreateModal does. Only active once we're in the processing stage.
+  // WebCreateModal does. Only active once we're in the processing stage (and
+  // never for direct model uploads, which don't touch KIRI).
   const {
     isComplete: processingComplete,
     isConverting,
     isFailed: processingFailed,
-  } = useProcessingFlow(serialize, captureId, createState === "processing");
+  } = useProcessingFlow(serialize, captureId, createState === "processing" && !isModelRun);
+
+  // Direct-upload runs poll the capture row while the Lambda converts a PLY.
+  const { isComplete: uploadComplete, isFailed: uploadFailed } = useUploadedCapturePoll(
+    captureId,
+    createState === "processing" && isModelRun
+  );
 
   const isBusy = createState === "uploading" || createState === "processing";
 
@@ -75,21 +93,37 @@ export function CaptureView({ onClose, onComplete, onBusyChange }: CaptureViewPr
 
   // Advance to "complete" once KIRI + Lambda have both finished.
   useEffect(() => {
+    if (isModelRun) return;
     if (processingComplete && !isConverting && createState === "processing") {
       setProgress(100);
       setCreateState("complete");
       toast.success("3D model created successfully!");
     }
-  }, [processingComplete, isConverting, createState]);
+  }, [processingComplete, isConverting, createState, isModelRun]);
 
   // Surface a KIRI/Lambda failure detected during processing.
   useEffect(() => {
+    if (isModelRun) return;
     if (processingFailed && createState === "processing") {
       setError("Reconstruction failed. Please try again with more overlapping shots.");
       setCreateState("error");
       toast.error("Reconstruction failed.");
     }
-  }, [processingFailed, createState]);
+  }, [processingFailed, createState, isModelRun]);
+
+  // Direct-upload completion/failure (PLY conversion result).
+  useEffect(() => {
+    if (!isModelRun || createState !== "processing") return;
+    if (uploadComplete) {
+      setProgress(100);
+      setCreateState("complete");
+      toast.success("3D model uploaded successfully!");
+    } else if (uploadFailed) {
+      setError("Conversion failed. The PLY may not be a Gaussian Splat export — try re-exporting it.");
+      setCreateState("error");
+      toast.error("Conversion failed.");
+    }
+  }, [uploadComplete, uploadFailed, createState, isModelRun]);
 
   // Revoke object URLs on unmount to avoid leaks.
   useEffect(() => {
@@ -109,12 +143,40 @@ export function CaptureView({ onClose, onComplete, onBusyChange }: CaptureViewPr
         next.push({ file, preview: URL.createObjectURL(file), type: isVideo ? "video" : "image" });
       }
     });
-    if (next.length) setUploadedFiles((prev) => [...prev, ...next]);
+    if (next.length) {
+      // Photos/video and a staged 3D file are mutually exclusive flows.
+      setModelFile((prev) => {
+        if (prev) toast.info("Removed the staged 3D file — capture uses photos/video.");
+        return null;
+      });
+      setUploadedFiles((prev) => [...prev, ...next]);
+    }
   }, []);
 
   const handleInput = (ref: React.RefObject<HTMLInputElement>) => (e: React.ChangeEvent<HTMLInputElement>) => {
     addFiles(e.target.files);
     if (ref.current) ref.current.value = ""; // allow re-selecting the same file
+  };
+
+  // Validate and stage a picked .ply/.splat. Mobile pickers don't reliably
+  // enforce the input's `accept` filter, so validation runs regardless.
+  const handleModelInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (modelInputRef.current) modelInputRef.current.value = "";
+    if (!file) return;
+    setError(null);
+    const result = await validateModelFile(file);
+    if (!result.ok) {
+      setError(result.error);
+      toast.error(result.error);
+      return;
+    }
+    if (uploadedFiles.length > 0) {
+      uploadedFiles.forEach((f) => URL.revokeObjectURL(f.preview));
+      setUploadedFiles([]);
+      toast.info("Cleared photos/video — uploading the 3D file instead.");
+    }
+    setModelFile({ file, kind: result.kind });
   };
 
   const handleRemoveFile = (index: number) => {
@@ -125,6 +187,9 @@ export function CaptureView({ onClose, onComplete, onBusyChange }: CaptureViewPr
   };
 
   const handleStart = async () => {
+    if (modelFile) {
+      return handleStartModelUpload();
+    }
     if (uploadedFiles.length === 0) {
       setError("Add at least one photo or video first.");
       return;
@@ -158,10 +223,64 @@ export function CaptureView({ onClose, onComplete, onBusyChange }: CaptureViewPr
     }
   };
 
+  // PR8: upload a staged .ply/.splat directly to S3 (no KIRI). Retries reuse
+  // the capture row created on the first attempt.
+  const handleStartModelUpload = async () => {
+    if (!modelFile) return;
+    if (!title.trim()) {
+      setError("Give your capture a title.");
+      return;
+    }
+
+    setError(null);
+    setProgress(0);
+    setCreateState("uploading");
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const result = await directUploadMutation.mutateAsync({
+        file: modelFile.file,
+        kind: modelFile.kind,
+        title,
+        existingCaptureId: captureId ?? undefined,
+        onCaptureCreated: setCaptureId,
+        onProgress: setProgress,
+        signal: controller.signal,
+      });
+
+      if (result.kind === "ply") {
+        // Lambda conversion runs server-side; the poll flips us to complete.
+        setCreateState("processing");
+      } else {
+        setProgress(100);
+        setCreateState("complete");
+        toast.success("3D model uploaded successfully!");
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        // User cancelled — the mutation already removed the placeholder row.
+        setCaptureId(null);
+        setProgress(0);
+        setCreateState("idle");
+        toast.info("Upload cancelled");
+      } else {
+        console.error("Direct model upload failed:", err);
+        setError(err instanceof Error ? err.message : "Upload failed. Please try again.");
+        setCreateState("error");
+        toast.error("Upload failed. Please try again.");
+      }
+    } finally {
+      abortRef.current = null;
+    }
+  };
+
   // Reset back to the picker (used for "Try again" / "Create another").
   const handleReset = () => {
     uploadedFiles.forEach((f) => URL.revokeObjectURL(f.preview));
     setUploadedFiles([]);
+    setModelFile(null);
     setTitle("");
     setError(null);
     setProgress(0);
@@ -192,6 +311,13 @@ export function CaptureView({ onClose, onComplete, onBusyChange }: CaptureViewPr
         className="hidden"
         onChange={handleInput(galleryInputRef)}
       />
+      <input
+        ref={modelInputRef}
+        type="file"
+        accept=".ply,.splat"
+        className="hidden"
+        onChange={handleModelInput}
+      />
 
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2">
@@ -215,7 +341,50 @@ export function CaptureView({ onClose, onComplete, onBusyChange }: CaptureViewPr
       {/* ---- Picker (idle) ---- */}
       {createState === "idle" && (
         <div className="flex-1 flex flex-col px-5 pb-8 overflow-y-auto animate-fade-in">
-          {uploadedFiles.length === 0 ? (
+          {modelFile ? (
+            // Staged 3D file (PR8 direct upload)
+            <div className="flex-1 pt-4">
+              <div className="rounded-xl border border-border bg-secondary/50 p-4 flex items-center gap-3">
+                <div className="w-11 h-11 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
+                  <Box className="w-5 h-5 text-primary" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground truncate">{modelFile.file.name}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {formatBytes(modelFile.file.size)}
+                    <span className="ml-2 px-1.5 py-0.5 rounded bg-secondary text-[10px] uppercase tracking-wider">
+                      {modelFile.kind}
+                    </span>
+                  </p>
+                </div>
+                <button
+                  onClick={() => setModelFile(null)}
+                  className="w-8 h-8 rounded-full bg-background/80 flex items-center justify-center flex-shrink-0"
+                  aria-label="Remove 3D file"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              {modelFile.kind === "ply" && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  PLY files are converted to the web format after upload (~2–3 min).
+                </p>
+              )}
+
+              {/* Title */}
+              <div className="mt-5">
+                <label htmlFor="capture-title" className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 block">
+                  Title
+                </label>
+                <Input
+                  id="capture-title"
+                  placeholder="Name this capture"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                />
+              </div>
+            </div>
+          ) : uploadedFiles.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center">
               <div className="w-24 h-24 rounded-full bg-secondary flex items-center justify-center mb-6">
                 <Camera className="w-10 h-10 text-muted-foreground" />
@@ -223,6 +392,7 @@ export function CaptureView({ onClose, onComplete, onBusyChange }: CaptureViewPr
               <p className="text-foreground font-medium text-lg mb-2">Capture a subject</p>
               <p className="text-muted-foreground text-sm max-w-xs mb-2">
                 Take a video or several photos from all sides, at high and low angles.
+                Or upload a .ply/.splat exported from another app.
               </p>
             </div>
           ) : (
@@ -283,20 +453,24 @@ export function CaptureView({ onClose, onComplete, onBusyChange }: CaptureViewPr
           )}
 
           {/* Source buttons */}
-          <div className="grid grid-cols-2 gap-3 mt-6">
-            <Button variant="outline" size="lg" className="h-14 gap-2" onClick={() => cameraInputRef.current?.click()}>
+          <div className="grid grid-cols-3 gap-2 mt-6">
+            <Button variant="outline" size="lg" className="h-14 gap-1.5 px-2" onClick={() => cameraInputRef.current?.click()}>
               <Camera className="w-5 h-5" />
               Camera
             </Button>
-            <Button variant="outline" size="lg" className="h-14 gap-2" onClick={() => galleryInputRef.current?.click()}>
+            <Button variant="outline" size="lg" className="h-14 gap-1.5 px-2" onClick={() => galleryInputRef.current?.click()}>
               <Images className="w-5 h-5" />
               Gallery
             </Button>
+            <Button variant="outline" size="lg" className="h-14 gap-1.5 px-2" onClick={() => modelInputRef.current?.click()}>
+              <Box className="w-5 h-5" />
+              3D file
+            </Button>
           </div>
 
-          {uploadedFiles.length > 0 && (
+          {(uploadedFiles.length > 0 || modelFile) && (
             <Button variant="default" size="xl" className="w-full mt-3" onClick={handleStart}>
-              Create 3D Model
+              {modelFile ? "Upload 3D Model" : "Create 3D Model"}
             </Button>
           )}
         </div>
@@ -314,12 +488,20 @@ export function CaptureView({ onClose, onComplete, onBusyChange }: CaptureViewPr
           </div>
 
           <h2 className="text-2xl font-bold text-foreground mb-2">
-            {createState === "uploading" ? "Uploading" : "Processing Scan"}
+            {createState === "uploading"
+              ? "Uploading"
+              : isModelRun
+                ? "Converting"
+                : "Processing Scan"}
           </h2>
           <p className="text-muted-foreground text-center mb-8 max-w-xs">
             {createState === "uploading"
-              ? "Sending your files for reconstruction…"
-              : "Generating your 3D Gaussian Splat. Keep CultraVista open — this can take a few minutes."}
+              ? isModelRun
+                ? `Sending ${modelFile.file.name} (${formatBytes(modelFile.file.size)})…`
+                : "Sending your files for reconstruction…"
+              : isModelRun
+                ? "Converting your PLY to the web format. Keep CultraVista open — this takes about 2–3 minutes."
+                : "Generating your 3D Gaussian Splat. Keep CultraVista open — this can take a few minutes."}
           </p>
 
           {createState === "uploading" && (
@@ -329,6 +511,16 @@ export function CaptureView({ onClose, onComplete, onBusyChange }: CaptureViewPr
                 <span className="text-primary font-bold">{Math.round(progress)}%</span>
               </div>
               <Progress value={progress} className="h-2" />
+              {isModelRun && (
+                <Button
+                  variant="ghost"
+                  className="w-full gap-2 text-muted-foreground hover:text-destructive"
+                  onClick={() => abortRef.current?.abort()}
+                >
+                  <Ban className="w-4 h-4" />
+                  Cancel upload
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -371,14 +563,16 @@ export function CaptureView({ onClose, onComplete, onBusyChange }: CaptureViewPr
               className="w-full gap-2"
               onClick={() => {
                 // Retry with the same files if we still have them, else start over.
-                if (uploadedFiles.length > 0) {
+                if (modelFile) {
+                  handleStartModelUpload();
+                } else if (uploadedFiles.length > 0) {
                   handleStart();
                 } else {
                   handleReset();
                 }
               }}
             >
-              {uploadedFiles.length > 0 ? "Try Again" : "Start Over"}
+              {uploadedFiles.length > 0 || modelFile ? "Try Again" : "Start Over"}
             </Button>
             <Button variant="ghost" className="w-full" onClick={onClose}>
               Close

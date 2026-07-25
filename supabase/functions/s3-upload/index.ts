@@ -1,11 +1,92 @@
-// Supabase Edge Function for AWS S3 uploads
+// Supabase Edge Function for AWS S3 uploads.
+// Two modes:
+//   - multipart/form-data (legacy): the file passes through this function to S3.
+//     Only viable for small files — the whole body is buffered in memory.
+//   - JSON { mode: "presign", captureId, kind }: returns a short-lived presigned
+//     S3 PUT URL so the browser uploads large files (30–200MB splats/PLYs)
+//     directly to S3. AWS credentials never leave this function; the object key
+//     is derived server-side from the caller's user id, so clients cannot write
+//     to arbitrary key prefixes.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.89.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+const jsonResponse = (body: unknown, status: number) =>
+  new Response(JSON.stringify(body), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    status,
+  });
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PRESIGN_EXPIRY_SECONDS = "900"; // 15 minutes — plenty for a 200MB upload
+
+// Presign mode: validate the caller + capture ownership, then return a signed
+// PUT URL for an owner-scoped key. No file bytes touch this function.
+async function handlePresign(req: Request, aws: AwsClient, bucket: string, region: string) {
+  const { mode, captureId, kind } = await req.json();
+
+  if (mode !== "presign") {
+    return jsonResponse({ success: false, error: "Unsupported mode" }, 400);
+  }
+  if (kind !== "ply" && kind !== "splat") {
+    return jsonResponse({ success: false, error: "kind must be 'ply' or 'splat'" }, 400);
+  }
+  if (typeof captureId !== "string" || !UUID_RE.test(captureId)) {
+    return jsonResponse({ success: false, error: "captureId must be a UUID" }, 400);
+  }
+
+  // Resolve the caller from the forwarded JWT. The gateway already enforced
+  // verify_jwt, but we need the user id for the key and to scope the RLS check.
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader) {
+    return jsonResponse({ success: false, error: "Missing Authorization header" }, 401);
+  }
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: authHeader } } },
+  );
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError || !userData?.user) {
+    return jsonResponse({ success: false, error: "Not authenticated" }, 401);
+  }
+
+  // RLS-scoped lookup: the capture must exist and be visible to the caller
+  // (org member), otherwise we refuse to sign a URL for it.
+  const { data: captureRow, error: captureError } = await supabase
+    .from("captures")
+    .select("id")
+    .eq("id", captureId)
+    .maybeSingle();
+  if (captureError || !captureRow) {
+    return jsonResponse({ success: false, error: "Capture not found" }, 404);
+  }
+
+  const fileName = kind === "ply" ? "source.ply" : "model.splat";
+  const key = `uploads/${userData.user.id}/${captureId}/${fileName}`;
+
+  const objectUrl = new URL(`https://${bucket}.s3.${region}.amazonaws.com/${key}`);
+  objectUrl.searchParams.set("X-Amz-Expires", PRESIGN_EXPIRY_SECONDS);
+  const signed = await aws.sign(new Request(objectUrl, { method: "PUT" }), {
+    aws: { signQuery: true },
+  });
+
+  return jsonResponse(
+    {
+      success: true,
+      url: signed.url,
+      key,
+      // Unsigned URL of the object once uploaded — what gets stored in the DB.
+      publicUrl: objectUrl.origin + objectUrl.pathname,
+    },
+    200,
+  );
+}
 
 serve(async (req) => {
   // Handle CORS preflight
@@ -33,6 +114,11 @@ serve(async (req) => {
       region: AWS_REGION,
       service: "s3",
     });
+
+    // JSON body → presign mode; multipart → legacy pass-through upload.
+    if (req.headers.get("content-type")?.includes("application/json")) {
+      return await handlePresign(req, aws, S3_BUCKET, AWS_REGION);
+    }
 
     // Parse multipart form data
     const formData = await req.formData();

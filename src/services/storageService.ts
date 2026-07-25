@@ -1,10 +1,21 @@
 // Storage service using AWS S3 via Supabase Edge Function
 import { supabase } from '@/integrations/supabase/client';
+import type { ModelKind } from '@/lib/uploadValidation';
 
 interface UploadResult {
   success: boolean;
   url?: string;
   key?: string;
+  error?: string;
+}
+
+interface PresignResult {
+  success: boolean;
+  /** Signed S3 PUT URL (expires in ~15 min). */
+  url?: string;
+  key?: string;
+  /** Unsigned URL of the object once uploaded — what gets stored in the DB. */
+  publicUrl?: string;
   error?: string;
 }
 
@@ -36,6 +47,92 @@ export class StorageService {
         error: error instanceof Error ? error.message : 'Upload failed',
       };
     }
+  }
+
+  // Ask the s3-upload edge function for a presigned S3 PUT URL (PR8 direct
+  // uploads). Large model files (30–200MB) can't pass through the edge function
+  // itself — the browser PUTs straight to S3 with the returned URL. The key is
+  // derived server-side (uploads/{userId}/{captureId}/…), never client-chosen.
+  static async presignModelUpload(captureId: string, kind: ModelKind): Promise<PresignResult> {
+    try {
+      const { data, error } = await supabase.functions.invoke('s3-upload', {
+        // Plain object body → JSON content type → the edge function's presign branch.
+        body: { mode: 'presign', captureId, kind },
+      });
+      if (error) {
+        console.error('Presign error:', error);
+        return { success: false, error: error.message };
+      }
+      if (!data?.success || !data?.url) {
+        return { success: false, error: data?.error || 'Failed to presign upload' };
+      }
+      return { success: true, url: data.url, key: data.key, publicUrl: data.publicUrl };
+    } catch (error) {
+      console.error('Error presigning upload:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to presign upload',
+      };
+    }
+  }
+
+  // PUT a file directly to a presigned S3 URL. Uses XMLHttpRequest because
+  // fetch() has no upload-progress events. Rejects with a DOMException named
+  // "AbortError" on cancel so callers can tell a user cancel from a failure.
+  static uploadToPresignedUrl(
+    url: string,
+    file: File,
+    opts: { onProgress?: (percent: number) => void; signal?: AbortSignal } = {}
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      let aborted = false;
+
+      const onAbort = () => {
+        aborted = true;
+        xhr.abort();
+      };
+      if (opts.signal) {
+        if (opts.signal.aborted) {
+          reject(new DOMException('Upload cancelled', 'AbortError'));
+          return;
+        }
+        opts.signal.addEventListener('abort', onAbort, { once: true });
+      }
+      const cleanup = () => opts.signal?.removeEventListener('abort', onAbort);
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && opts.onProgress) {
+          opts.onProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      };
+      xhr.onload = () => {
+        cleanup();
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+        } else {
+          reject(new Error(`Upload failed: S3 returned ${xhr.status} ${xhr.statusText}`));
+        }
+      };
+      xhr.onerror = () => {
+        cleanup();
+        reject(new Error('Upload failed: network error while sending the file'));
+      };
+      xhr.onabort = () => {
+        cleanup();
+        if (aborted) {
+          reject(new DOMException('Upload cancelled', 'AbortError'));
+        } else {
+          reject(new Error('Upload aborted'));
+        }
+      };
+
+      xhr.open('PUT', url);
+      // The presign deliberately doesn't sign Content-Type, so this header is
+      // free to send without breaking the signature.
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.send(file);
+    });
   }
 
   // Upload a thumbnail to Supabase Storage (captures bucket). Thumbnails used

@@ -56,9 +56,11 @@ export function LibraryView({ onSelectCapture, onStartCapture }: LibraryViewProp
       return result.data || [];
     },
     // Poll every 5 seconds while anything is still processing/converting.
+    // Direct .splat uploads (PR8) never get a folder_path — `file` alone
+    // marks them done.
     refetchInterval: (query) => {
       const data = query.state.data;
-      const hasProcessing = data?.some((c: Capture) => c.status === 0 || (c.status === 1 && !c.folder_path));
+      const hasProcessing = data?.some((c: Capture) => c.status === 0 || (c.status === 1 && !c.folder_path && !c.file));
       return hasProcessing ? 5000 : false;
     },
   });

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { KiriService } from '@/services/kiriService';
 import { CaptureService } from '@/services/captureService';
 import { StorageService } from '@/services/storageService';
+import type { ModelKind } from '@/lib/uploadValidation';
 
 // Capture hooks
 export const useCaptures = () => {
@@ -162,6 +163,155 @@ export const useKiriUpload = () => {
       queryClient.invalidateQueries({ queryKey: ['captures'] });
     },
   });
+};
+
+// PR8: direct upload of a user-provided .ply/.splat (from Scaniverse, Polycam,
+// Luma, SuperSplat…). Flow: create the capture row → presign an owner-scoped
+// S3 key → the browser PUTs the file straight to S3 (real progress, cancelable)
+// → .ply hands off to the existing ply-to-splat Lambda; .splat is the delivery
+// file as-is and the row completes immediately.
+export const useDirectModelUpload = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      file,
+      kind,
+      title,
+      metadata,
+      existingCaptureId,
+      onCaptureCreated,
+      onProgress,
+      signal,
+    }: {
+      file: File;
+      kind: ModelKind;
+      title: string;
+      metadata?: {
+        description?: string | null;
+        capture_date?: string | null;
+        location_text?: string | null;
+        tags?: string[];
+      };
+      /** Retry path: reuse the row created by a failed attempt instead of
+          inserting a duplicate. A fresh presigned URL is fetched either way. */
+      existingCaptureId?: string;
+      /** Fires as soon as the capture row exists, so the caller can remember
+          the id for retries even if a later step throws. */
+      onCaptureCreated?: (captureId: string) => void;
+      onProgress?: (progress: number) => void;
+      signal?: AbortSignal;
+    }) => {
+      // Step 1: create (or reuse) the capture row.
+      let captureId = existingCaptureId;
+      if (!captureId) {
+        const created = await CaptureService.createCapture({
+          title: title.trim(),
+          source: 'upload',
+          ...metadata,
+        });
+        if (!created.success || !created.data) {
+          throw new Error(created.error || 'Failed to create capture');
+        }
+        captureId = created.data.id;
+      }
+      onCaptureCreated?.(captureId);
+      if (onProgress) onProgress(5);
+
+      try {
+        // Step 2: presign an owner-scoped S3 key (15-minute expiry).
+        const presign = await StorageService.presignModelUpload(captureId, kind);
+        if (!presign.success || !presign.url || !presign.publicUrl) {
+          throw new Error(presign.error || 'Failed to prepare the upload');
+        }
+
+        // Step 3: PUT the file directly to S3. Real byte progress mapped to
+        // 5–90%; the remainder covers the post-upload bookkeeping below.
+        await StorageService.uploadToPresignedUrl(presign.url, file, {
+          onProgress: (pct) => onProgress?.(5 + Math.round(pct * 0.85)),
+          signal,
+        });
+        if (onProgress) onProgress(92);
+
+        // Step 4: route by type.
+        if (kind === 'ply') {
+          // Store the archival master first, then hand off to the Lambda.
+          // (ply-to-splat preserves a pre-set ply_url when the Lambda doesn't
+          // emit one itself.) status 0 also resets a failed row on retry so
+          // the completion poll doesn't read a stale "failed".
+          const updated = await CaptureService.updateCapture(captureId, {
+            ply_url: presign.publicUrl,
+            status: 0,
+          });
+          if (!updated.success) {
+            throw new Error(updated.error || 'Failed to record the uploaded PLY');
+          }
+          const conversion = await KiriService.convertPlyToSplat(presign.publicUrl, captureId);
+          if (!conversion.success) {
+            throw new Error(conversion.error || 'Failed to start PLY conversion');
+          }
+        } else {
+          // .splat is already the delivery format — mark complete directly.
+          // The library card's SplatThumbnail pipeline generates and persists
+          // the thumbnail the first time the card renders.
+          const updated = await CaptureService.updateCapture(captureId, {
+            file: presign.publicUrl,
+            status: 1,
+          });
+          if (!updated.success) {
+            throw new Error(updated.error || 'Failed to finalize the upload');
+          }
+        }
+
+        if (onProgress) onProgress(100);
+        return { captureId, kind };
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          // User cancelled: remove the placeholder row so the library doesn't
+          // show an eternal "Processing" card. If delete fails (e.g. RLS),
+          // mark it failed so it's at least actionable.
+          const deleted = await CaptureService.deleteCapture(captureId);
+          if (!deleted.success) {
+            await CaptureService.updateCapture(captureId, { status: 2 });
+          }
+        }
+        // Non-abort errors keep the row (status 0) so the caller can retry
+        // with existingCaptureId and a fresh presigned URL.
+        throw error;
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['captures'] });
+    },
+  });
+};
+
+// PR8: poll a capture row until the Lambda conversion lands (status 1) or
+// fails (status 2). Unlike useProcessingFlow this has no KIRI serialize —
+// direct uploads never touch the KIRI API.
+export const useUploadedCapturePoll = (captureId: string | null, enabled: boolean) => {
+  const query = useQuery({
+    queryKey: ['capture', captureId],
+    queryFn: async () => {
+      const result = await CaptureService.getCapture(captureId!);
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+      return result.data;
+    },
+    enabled: enabled && !!captureId,
+    refetchInterval: (q) => {
+      const status = q.state.data?.status;
+      return status === 1 || status === 2 ? false : 5000;
+    },
+  });
+
+  const status = query.data?.status;
+  return {
+    capture: query.data,
+    isComplete: status === 1,
+    isFailed: status === 2,
+  };
 };
 
 // KIRI status polling hook

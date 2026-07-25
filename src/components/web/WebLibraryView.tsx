@@ -57,10 +57,11 @@ export function WebLibraryView({ onSelectScan, searchQuery }: WebLibraryViewProp
       }
       return result.data || [];
     },
-    // Poll every 5 seconds if there are any processing items
+    // Poll every 5 seconds if there are any processing items. Direct .splat
+    // uploads (PR8) never get a folder_path — `file` alone marks them done.
     refetchInterval: (query) => {
       const data = query.state.data;
-      const hasProcessing = data?.some((c: Capture) => c.status === 0 || (c.status === 1 && !c.folder_path));
+      const hasProcessing = data?.some((c: Capture) => c.status === 0 || (c.status === 1 && !c.folder_path && !c.file));
       return hasProcessing ? 5000 : false;
     },
   });

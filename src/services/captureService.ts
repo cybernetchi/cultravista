@@ -65,6 +65,8 @@ interface CaptureUpdate extends CaptureMetadata {
   file?: string;
   serialize?: string;
   folder_path?: string;
+  // PR8: a directly-uploaded PLY stores its archival URL before conversion.
+  ply_url?: string | null;
 }
 
 interface ApiResponse<T> {

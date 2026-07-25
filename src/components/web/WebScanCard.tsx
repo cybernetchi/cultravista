@@ -13,15 +13,20 @@ interface WebScanCardProps {
 }
 
 export function WebScanCard({ scan, onClick, onDelete, viewMode, index }: WebScanCardProps) {
-  // Processing state: status 0 = processing, or status 1 complete but no folderPath yet
-  const isProcessing = scan.status === 0 || (scan.status === 1 && !scan.folderPath);
+  // A scan is renderable once it has any delivery splat URL — KIRI captures get
+  // folder_path from the Lambda, while direct .splat uploads (PR8) only set
+  // `file`. captureToScan already resolves both via deliverySplatUrl.
+  const hasModel = !!scan.splatUrl;
+  // Processing state: status 0 = processing, or status 1 complete but no
+  // delivery file yet (Lambda still converting PLY→splat).
+  const isProcessing = scan.status === 0 || (scan.status === 1 && !hasModel);
   const isFailed = scan.status === 2;
-  const isClickable = scan.status === 1 && scan.folderPath;
+  const isClickable = scan.status === 1 && hasModel;
 
   const getStatusLabel = () => {
     if (scan.status === 0) return "Processing";
     if (scan.status === 2) return "Failed";
-    if (scan.status === 1 && !scan.folderPath) return "Converting";
+    if (scan.status === 1 && !hasModel) return "Converting";
     return "";
   };
 

@@ -12,16 +12,20 @@ interface ScanCardProps {
 }
 
 export function ScanCard({ capture, onClick, onDelete, index }: ScanCardProps) {
+  // A capture is renderable once it has any delivery splat URL — KIRI captures
+  // get folder_path from the Lambda, while direct .splat uploads (PR8) only set
+  // `file`. deliverySplatUrl resolves both.
+  const hasModel = !!deliverySplatUrl(capture);
   // Processing state: status 0 = processing, or status 1 complete but no
-  // folder_path yet (Lambda still converting PLY→splat).
-  const isProcessing = capture.status === 0 || (capture.status === 1 && !capture.folder_path);
+  // delivery file yet (Lambda still converting PLY→splat).
+  const isProcessing = capture.status === 0 || (capture.status === 1 && !hasModel);
   const isFailed = capture.status === 2;
-  const isClickable = capture.status === 1 && !!capture.folder_path;
+  const isClickable = capture.status === 1 && hasModel;
 
   const getStatusLabel = () => {
     if (capture.status === 0) return "Processing";
     if (capture.status === 2) return "Failed";
-    if (capture.status === 1 && !capture.folder_path) return "Converting";
+    if (capture.status === 1 && !hasModel) return "Converting";
     return "";
   };
 

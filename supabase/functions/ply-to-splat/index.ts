@@ -57,8 +57,11 @@ async function processConversion(s3Url: string, captureId: string) {
       .update({
         folder_path: folderPath || (splatUrl ? splatUrl.replace('/output.splat', '') : null),
         file: splatUrl || null,
-        ply_url: plyUrl, // archival original (null until Lambda emits it)
-        spz_url: spzUrl, // SPZ delivery (null until Lambda emits it)
+        // Only overwrite ply_url/spz_url when the Lambda actually emitted them —
+        // a directly-uploaded PLY (PR8) stores its archival ply_url before
+        // conversion, and writing null here would wipe it.
+        ...(plyUrl ? { ply_url: plyUrl } : {}),
+        ...(spzUrl ? { spz_url: spzUrl } : {}),
         status: 1, // Complete
       })
       .eq('id', captureId);
