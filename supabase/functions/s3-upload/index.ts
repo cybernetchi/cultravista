@@ -16,7 +16,11 @@ serve(async (req) => {
   try {
     const AWS_ACCESS_KEY_ID = Deno.env.get("AWS_ACCESS_KEY_ID");
     const AWS_SECRET_ACCESS_KEY = Deno.env.get("AWS_SECRET_ACCESS_KEY");
-    const AWS_REGION = Deno.env.get("AWS_REGION") || "us-east-1";
+    // Tolerate a region secret pasted as the AWS console label (e.g.
+    // "US East (N. Virginia) us-east-1") by extracting the region code —
+    // interpolating the raw label into the endpoint produces an invalid URL.
+    const rawRegion = Deno.env.get("AWS_REGION") || "us-east-1";
+    const AWS_REGION = rawRegion.match(/[a-z]{2}(?:-[a-z]+)+-\d/)?.[0] ?? "us-east-1";
     const S3_BUCKET = Deno.env.get("S3_BUCKET");
 
     if (!AWS_ACCESS_KEY_ID || !AWS_SECRET_ACCESS_KEY || !S3_BUCKET) {

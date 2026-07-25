@@ -49,6 +49,7 @@ export function ScanCard({ capture, onClick, index }: ScanCardProps) {
         <SplatThumbnail
           splatUrl={deliverySplatUrl(capture)!}
           fallbackImage={capture.thumbnail || "/placeholder.svg"}
+          captureId={capture.id}
           className="w-full h-full"
         />
       ) : (

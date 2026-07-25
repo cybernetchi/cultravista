@@ -38,15 +38,33 @@ export class StorageService {
     }
   }
 
-  // Upload thumbnail to S3
+  // Upload a thumbnail to Supabase Storage (captures bucket). Thumbnails used
+  // to go through the s3-upload edge function, but a misconfigured AWS_REGION
+  // secret made that path fail silently for every capture — Supabase Storage
+  // needs no AWS config, is RLS-governed, and serves a public URL directly.
   static async uploadThumbnail(file: File | Blob, fileName: string): Promise<UploadResult> {
-    return this.uploadToS3(file, 'thumbnails', fileName);
+    try {
+      const path = `thumbnails/${fileName}`;
+      const { error } = await supabase.storage
+        .from('captures')
+        .upload(path, file, { contentType: 'image/jpeg', upsert: true });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      const { data } = supabase.storage.from('captures').getPublicUrl(path);
+      return { success: true, url: data.publicUrl, key: path };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Thumbnail upload failed',
+      };
+    }
   }
 
-  // Upload thumbnail buffer to S3
+  // Upload thumbnail buffer
   static async uploadThumbnailBuffer(buffer: ArrayBuffer, fileName: string): Promise<UploadResult> {
     const blob = new Blob([buffer], { type: 'image/jpeg' });
-    return this.uploadToS3(blob, 'thumbnails', fileName);
+    return this.uploadThumbnail(blob, fileName);
   }
 
   // Generate thumbnail from video

@@ -43,6 +43,7 @@ export function WebScanCard({ scan, onClick, viewMode, index }: WebScanCardProps
         <SplatThumbnail
           splatUrl={scan.splatUrl}
           fallbackImage={scan.thumbnail}
+          captureId={scan.id}
           className={className}
         />
       );

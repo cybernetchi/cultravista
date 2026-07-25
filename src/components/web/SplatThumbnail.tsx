@@ -1,6 +1,9 @@
 import { Suspense, useState, useEffect, useRef, useCallback } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { Splat, PerspectiveCamera } from "@react-three/drei";
+import { useQueryClient } from "@tanstack/react-query";
+import { StorageService } from "@/services/storageService";
+import { CaptureService } from "@/services/captureService";
 import {
   resolveSplatUrl,
   useSplatData,
@@ -13,8 +16,17 @@ interface SplatThumbnailProps {
   splatUrl: string;
   /** Shown while the model snapshot is still being produced. */
   fallbackImage?: string;
+  /** When set, a freshly rendered snapshot is also uploaded and written back
+      to this capture's `thumbnail`, so other devices (cold caches) show the
+      model image immediately instead of the original source photo. */
+  captureId?: string;
   className?: string;
 }
+
+// Marker appended to server-persisted snapshot URLs (fragments are ignored by
+// HTTP) so we can tell a model snapshot from an original source photo and
+// avoid re-uploading on every cold-cache render.
+const SNAP_MARKER = "#cv-model-snap";
 
 // Cache captured thumbnails by URL — in memory for this session, and in
 // localStorage so revisits (and the other layout, web/mobile) show the model
@@ -190,9 +202,10 @@ function CaptureScene({
   return <ThumbnailRig bounds={data?.bounds ?? null} onFramed={handleFramed} />;
 }
 
-export function SplatThumbnail({ splatUrl, fallbackImage, className }: SplatThumbnailProps) {
+export function SplatThumbnail({ splatUrl, fallbackImage, captureId, className }: SplatThumbnailProps) {
   // Route remote splats through the proxy (S3 has no CORS header), matching the viewer.
   const loadUrl = resolveSplatUrl(splatUrl);
+  const queryClient = useQueryClient();
 
   const [cachedThumbnail, setCachedThumbnail] = useState<string | null>(
     () => readCachedThumbnail(splatUrl)
@@ -205,12 +218,33 @@ export function SplatThumbnail({ splatUrl, fallbackImage, className }: SplatThum
   // The slot token this tile currently holds (null when queued or done).
   const tokenRef = useRef<symbol | null>(null);
 
+  // Fire-and-forget: upload a fresh snapshot and point the capture row's
+  // thumbnail at it (marked), unless the stored thumbnail already is one.
+  const persistSnapshot = useCallback(
+    async (dataUrl: string) => {
+      if (!captureId || fallbackImage?.includes(SNAP_MARKER)) return;
+      try {
+        const blob = await (await fetch(dataUrl)).blob();
+        const up = await StorageService.uploadThumbnail(blob, `model-snap-${captureId}.jpg`);
+        if (up.success && up.url) {
+          await CaptureService.updateCapture(captureId, { thumbnail: up.url + SNAP_MARKER });
+          queryClient.invalidateQueries({ queryKey: ["captures"] });
+        }
+      } catch (error) {
+        // Cosmetic optimisation only — never surface a failure to the user.
+        console.warn("Model thumbnail persist failed:", error);
+      }
+    },
+    [captureId, fallbackImage, queryClient]
+  );
+
   const handleCapture = useCallback((dataUrl: string) => {
     setCachedThumbnail(dataUrl);
     setIsCapturing(false);
     releaseCapture(tokenRef.current);
     tokenRef.current = null;
-  }, []);
+    void persistSnapshot(dataUrl);
+  }, [persistSnapshot]);
 
   const handleFail = useCallback(() => {
     setFailed(true);
