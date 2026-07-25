@@ -160,6 +160,29 @@ export class CaptureService {
     }
   }
 
+  // Delete a capture row (RLS: org owner/admin only). Used to clean up stuck
+  // or failed captures. Note: S3 assets and the Supabase-storage thumbnail are
+  // intentionally not removed here — S3 cleanup needs a credentialled
+  // server-side call; orphaned files can be swept by a later maintenance job.
+  static async deleteCapture(id: string): Promise<ApiResponse<null>> {
+    try {
+      const { error } = await supabase.from('captures').delete().eq('id', id);
+
+      if (error) {
+        console.error('Error deleting capture:', error);
+        return { success: false, error: error.message };
+      }
+
+      return { success: true, data: null };
+    } catch (error) {
+      console.error('Error deleting capture:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to delete capture',
+      };
+    }
+  }
+
   // Get all captures
   static async getAllCaptures(): Promise<ApiResponse<Capture[]>> {
     try {

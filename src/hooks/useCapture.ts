@@ -177,11 +177,11 @@ export const useKiriStatus = (serialize: string, enabled: boolean = true) => {
     },
     enabled: enabled && !!serialize,
     refetchInterval: (query) => {
-      // Stop polling if completed or failed
+      // Stop polling on any terminal state
       const status = query.state.data?.status;
       console.log('KIRI status poll:', status);
-      // KIRI status: 0=processing, 1=failed, 2=successful
-      return status === 1 || status === 2 ? false : 5000;
+      // KIRI status: -1=uploading, 0=processing, 1=failed, 2=successful, 3=queuing, 4=expired
+      return status === 1 || status === 2 || status === 4 ? false : 5000;
     },
   });
 };
@@ -228,6 +228,11 @@ export const usePlyToSplatConversion = () => {
   });
 };
 
+// Serializes currently being driven by a mounted useProcessingFlow in this tab.
+// CaptureRecoveryManager consults this so it never attaches a second flow to a
+// capture that an open create modal is already processing.
+export const activeProcessingSerializes = new Set<string>();
+
 // Complete processing flow hook - handles status polling and Lambda trigger
 export const useProcessingFlow = (
   serialize: string | null,
@@ -237,9 +242,18 @@ export const useProcessingFlow = (
   const queryClient = useQueryClient();
   const getModelZip = useGetModelZip();
   const convertToSplat = usePlyToSplatConversion();
-  
+
   // Track if we've triggered Lambda conversion (fire-and-forget)
   const [conversionTriggered, setConversionTriggered] = React.useState(false);
+
+  // Register this flow as the active driver for its serialize while mounted.
+  React.useEffect(() => {
+    if (!enabled || !serialize) return;
+    activeProcessingSerializes.add(serialize);
+    return () => {
+      activeProcessingSerializes.delete(serialize);
+    };
+  }, [serialize, enabled]);
 
   // Poll KIRI status
   const statusQuery = useKiriStatus(serialize || '', enabled && !!serialize);
@@ -268,6 +282,33 @@ export const useProcessingFlow = (
     
     return () => clearInterval(interval);
   }, [conversionTriggered, captureId, captureQuery.data?.status, queryClient]);
+
+  // Persist a terminal KIRI failure to the DB. Without this, a capture whose
+  // KIRI job failed (status 1) or expired (status 4) stays at DB status 0
+  // ("Processing") forever. Guarded by a ref so we write at most once.
+  const markedFailedRef = React.useRef(false);
+  React.useEffect(() => {
+    const kiriStatus = statusQuery.data?.status;
+    const isTerminalFailure = kiriStatus === 1 || kiriStatus === 4;
+    // Only write when the row is still marked processing (0).
+    if (!isTerminalFailure || !captureId || markedFailedRef.current) return;
+    if (captureQuery.data?.status !== 0) return;
+
+    markedFailedRef.current = true;
+    CaptureService.updateCapture(captureId, { status: 2 })
+      .then((res) => {
+        if (res.success) {
+          queryClient.invalidateQueries({ queryKey: ['captures'] });
+          queryClient.invalidateQueries({ queryKey: ['capture', captureId] });
+        } else {
+          // Allow a retry on the next poll if the write itself failed.
+          markedFailedRef.current = false;
+        }
+      })
+      .catch(() => {
+        markedFailedRef.current = false;
+      });
+  }, [statusQuery.data?.status, captureId, captureQuery.data?.status, queryClient]);
 
   // Define triggerConversion with useCallback BEFORE the useEffect
   const triggerConversion = React.useCallback(async () => {

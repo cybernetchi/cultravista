@@ -10,6 +10,7 @@ import { CaptureView } from "@/components/capture/CaptureView";
 import { ProfileView } from "@/components/profile/ProfileView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { WebLayout } from "@/components/web/WebLayout";
+import { CaptureRecoveryManager } from "@/components/CaptureRecoveryManager";
 import { Scan, ViewMode } from "@/types/scan";
 import { toast } from "sonner";
 
@@ -21,7 +22,13 @@ const Index = () => {
 
   // Use web layout for desktop
   if (!isMobile) {
-    return <WebLayout />;
+    return (
+      <>
+        {/* Resumes captures left stuck in "Processing" by a closed tab. */}
+        <CaptureRecoveryManager />
+        <WebLayout />
+      </>
+    );
   }
 
   // Mobile layout
@@ -124,6 +131,8 @@ const Index = () => {
 
   return (
     <MobileFrame>
+      {/* Resumes captures left stuck in "Processing" by a closed tab. */}
+      <CaptureRecoveryManager />
       {renderMainContent()}
       {showBottomNav && (
         <BottomNav activeTab={activeTab} onTabChange={handleTabChange} />
