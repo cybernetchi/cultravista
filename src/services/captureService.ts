@@ -73,6 +73,12 @@ interface ApiResponse<T> {
   error?: string;
 }
 
+// Lightweight summary of a published exhibit for public surfaces (landing demo).
+export type PublishedCaptureSummary = Pick<
+  Capture,
+  'id' | 'slug' | 'title' | 'title_zh_hant' | 'description' | 'description_zh_hant' | 'thumbnail'
+>;
+
 export class CaptureService {
   // Create new capture
   static async createCapture(data: CaptureInsert): Promise<ApiResponse<Capture>> {
@@ -265,6 +271,29 @@ export class CaptureService {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to load exhibit',
+      };
+    }
+  }
+
+  // Anon-safe list of published exhibits for public surfaces (landing demo).
+  // The PR4 RLS policy "Public can view published captures" permits this SELECT
+  // without a session. Newest first; only slugged rows are embeddable.
+  static async getPublishedCaptures(limit = 2): Promise<ApiResponse<PublishedCaptureSummary[]>> {
+    try {
+      const { data, error } = await supabase
+        .from('captures')
+        .select('id, slug, title, title_zh_hant, description, description_zh_hant, thumbnail')
+        .eq('published', true)
+        .not('slug', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data: data ?? [] };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to load exhibits',
       };
     }
   }

@@ -105,7 +105,7 @@ serve(async (req) => {
 
     // Start background task using EdgeRuntime.waitUntil
     // This allows the function to return immediately while continuing to process
-    // @ts-ignore - EdgeRuntime is available in Supabase Edge Functions
+    // @ts-expect-error - EdgeRuntime is available in Supabase Edge Functions
     EdgeRuntime.waitUntil(processConversion(s3_url, capture_id));
 
     // Return immediately - the background task will update the database when complete

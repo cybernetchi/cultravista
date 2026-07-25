@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import Index from "./pages/Index";
+import Landing from "./pages/Landing";
 import Auth from "./pages/Auth";
 import IframeViewer from "./pages/IframeViewer";
 import Exhibit from "./pages/Exhibit";
@@ -24,9 +25,11 @@ const App = () => (
         <BrowserRouter>
           <AuthProvider>
             <Routes>
-              {/* App requires an authenticated session. */}
+              {/* Public landing page; signed-in visitors are bounced to /app. */}
+              <Route path="/" element={<Landing />} />
+              {/* The app requires an authenticated session. */}
               <Route
-                path="/"
+                path="/app"
                 element={
                   <ProtectedRoute>
                     <Index />
