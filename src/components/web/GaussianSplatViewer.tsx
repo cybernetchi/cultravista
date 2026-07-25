@@ -1,6 +1,6 @@
 import { Canvas, useThree, useFrame, ThreeEvent } from "@react-three/fiber";
 import { Splat, OrbitControls, PerspectiveCamera, Html, Billboard } from "@react-three/drei";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Vector3,
   BufferGeometry,
@@ -695,6 +695,7 @@ function SplatScene({
   onCameraPoseRef,
   cropBox,
   onCropBoxChange,
+  onReady,
 }: {
   src: string;
   annotations: Annotation[];
@@ -706,12 +707,29 @@ function SplatScene({
   onCameraPoseRef?: (getter: () => Annotation["cameraPose"]) => void;
   cropBox?: { min: [number, number, number]; max: [number, number, number] } | null;
   onCropBoxChange?: (b: { min: [number, number, number]; max: [number, number, number] }) => void;
+  onReady?: () => void;
 }) {
   // Route remote splats through the CORS-enabling proxy before loading/parsing.
   const loadUrl = resolveSplatUrl(src);
   const data = useSplatData(loadUrl);
   const bounds = data?.bounds ?? null;
   const points = data?.points ?? null;
+
+  // Keep the splat hidden until CameraRig has bounds to frame it with —
+  // otherwise it first draws at the default camera (object off-center/low)
+  // and visibly "pops" once the real framing lands. If bounds never resolve
+  // (e.g. the parse fails), fall back to showing it after a grace period
+  // rather than hiding the model forever.
+  const [forceShow, setForceShow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setForceShow(true), 8000);
+    return () => clearTimeout(t);
+  }, []);
+  const ready = bounds != null || forceShow;
+
+  useEffect(() => {
+    if (ready) onReady?.();
+  }, [ready, onReady]);
 
   return (
     <>
@@ -731,9 +749,11 @@ function SplatScene({
       {onCameraPoseRef && <CameraPoseProbe onReady={onCameraPoseRef} />}
       <ambientLight intensity={0.6} />
       <directionalLight position={[10, 10, 5]} intensity={1} />
-      <Suspense fallback={null}>
-        <Splat src={loadUrl} alphaTest={0.1} position={[0, 0, 0]} />
-      </Suspense>
+      <group visible={ready}>
+        <Suspense fallback={null}>
+          <Splat src={loadUrl} alphaTest={0.1} position={[0, 0, 0]} />
+        </Suspense>
+      </group>
       {mode === "edit" && onPlacePoint && (
         <PlacementPicker bounds={bounds} points={points} onPlace={onPlacePoint} />
       )}
@@ -776,6 +796,10 @@ export function GaussianSplatViewer({
 
   const toggleFullscreen = () => setIsFullscreen(!isFullscreen);
 
+  // The overlay lifts when the scene is actually framed and visible (see
+  // SplatScene's `ready`), not on a fixed timer.
+  const handleSceneReady = useCallback(() => setIsLoading(false), []);
+
   return (
     <div className={cn(
       "relative bg-background border border-border rounded-lg overflow-hidden",
@@ -812,7 +836,6 @@ export function GaussianSplatViewer({
         {isLoading && <LoadingOverlay />}
         <Canvas
           gl={{ antialias: true, alpha: true }}
-          onCreated={() => setTimeout(() => setIsLoading(false), 1500)}
           className="w-full h-full"
         >
           <SplatScene
@@ -826,14 +849,22 @@ export function GaussianSplatViewer({
             onCameraPoseRef={onCameraPoseRef}
             cropBox={cropBox}
             onCropBoxChange={onCropBoxChange}
+            onReady={handleSceneReady}
           />
         </Canvas>
       </div>
 
-      {/* Controls hint */}
+      {/* Controls hint — touch wording on phones, mouse wording on larger screens */}
       <div className="absolute bottom-0 left-0 right-0 z-20 p-3 bg-gradient-to-t from-background/90 to-transparent">
         <div className="flex items-center justify-center gap-2">
-          <div className="flex items-center gap-1 px-3 py-1.5 bg-card/80 backdrop-blur-sm rounded-full border border-border">
+          <div className="flex sm:hidden items-center gap-1 px-3 py-1.5 bg-card/80 backdrop-blur-sm rounded-full border border-border">
+            <Eye className="w-4 h-4 text-muted-foreground mr-1" />
+            <span className="text-xs text-muted-foreground">Drag to rotate</span>
+            <span className="text-border mx-2">•</span>
+            <ZoomIn className="w-4 h-4 text-muted-foreground mr-1" />
+            <span className="text-xs text-muted-foreground">Pinch to zoom</span>
+          </div>
+          <div className="hidden sm:flex items-center gap-1 px-3 py-1.5 bg-card/80 backdrop-blur-sm rounded-full border border-border">
             <Eye className="w-4 h-4 text-muted-foreground mr-1" />
             <span className="text-xs text-muted-foreground">Drag to rotate</span>
             <span className="text-border mx-2">•</span>

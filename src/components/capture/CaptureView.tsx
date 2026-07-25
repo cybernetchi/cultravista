@@ -24,9 +24,13 @@ interface UploadedFile {
 interface CaptureViewProps {
   onClose: () => void;
   onComplete: () => void;
+  /** Reports whether an upload/processing run is in flight, so the parent can
+      keep this component mounted (hidden) after close — the client drives the
+      KIRI→Lambda handoff, so unmounting mid-run would stall the capture. */
+  onBusyChange?: (busy: boolean) => void;
 }
 
-export function CaptureView({ onClose, onComplete }: CaptureViewProps) {
+export function CaptureView({ onClose, onComplete, onBusyChange }: CaptureViewProps) {
   const [createState, setCreateState] = useState<CreateState>("idle");
   const [progress, setProgress] = useState(0);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -51,6 +55,11 @@ export function CaptureView({ onClose, onComplete }: CaptureViewProps) {
   } = useProcessingFlow(serialize, captureId, createState === "processing");
 
   const isBusy = createState === "uploading" || createState === "processing";
+
+  // Let the parent know when a run is in flight (see CaptureViewProps).
+  useEffect(() => {
+    onBusyChange?.(isBusy);
+  }, [isBusy, onBusyChange]);
 
   // Warn before leaving mid-processing (the pipeline keeps running server-side,
   // but the user should know they're navigating away from live progress).
@@ -186,7 +195,17 @@ export function CaptureView({ onClose, onComplete }: CaptureViewProps) {
 
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2">
-        <Button variant="icon" size="icon" onClick={onClose} disabled={isBusy} aria-label="Close">
+        <Button
+          variant="icon"
+          size="icon"
+          onClick={() => {
+            // Closing mid-run is fine: the parent keeps us mounted (hidden) so
+            // the pipeline continues, and the library shows the processing card.
+            if (isBusy) toast.info("Processing continues in the background.");
+            onClose();
+          }}
+          aria-label="Close"
+        >
           <X className="w-6 h-6" />
         </Button>
         <span className="text-sm font-semibold text-foreground">New Capture</span>

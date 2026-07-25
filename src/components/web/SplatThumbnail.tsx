@@ -20,19 +20,30 @@ interface SplatThumbnailProps {
 const thumbnailCache = new Map<string, string>();
 
 // One WebGL capture at a time — many library tiles would otherwise spin up too
-// many GL contexts at once.
-const captureQueue: Array<() => void> = [];
-let isProcessingQueue = false;
+// many GL contexts at once (mobile Safari in particular kills contexts fast).
+//
+// The active slot is tracked by an ownership token. The TILE that claimed the
+// slot is solely responsible for releasing it (on capture, failure, or its own
+// unmount) — never code inside the Canvas, because a Canvas whose WebGL context
+// dies during init may unmount without running any scene cleanup, which would
+// starve the queue and leave every other tile spinning forever. releaseCapture
+// is idempotent per token, so a late/duplicate release can never free a slot
+// that a different tile now holds.
+type CaptureThunk = (token: symbol) => void;
+const captureQueue: CaptureThunk[] = [];
+let activeToken: symbol | null = null;
 
 function processQueue() {
-  if (isProcessingQueue || captureQueue.length === 0) return;
-  isProcessingQueue = true;
-  const next = captureQueue.shift();
-  if (next) next();
+  if (activeToken || captureQueue.length === 0) return;
+  const next = captureQueue.shift()!;
+  const token = Symbol("splat-thumbnail-capture");
+  activeToken = token;
+  next(token);
 }
 
-function finishCapture() {
-  isProcessingQueue = false;
+function releaseCapture(token: symbol | null) {
+  if (!token || activeToken !== token) return;
+  activeToken = null;
   // Small delay before the next capture so the WebGL context can be released.
   setTimeout(processQueue, 100);
 }
@@ -69,10 +80,12 @@ function CaptureScene({
   splatUrl,
   rawUrl,
   onCapture,
+  onFail,
 }: {
   splatUrl: string;
   rawUrl: string;
   onCapture: (dataUrl: string) => void;
+  onFail: () => void;
 }) {
   const { gl, scene, camera } = useThree();
   const capturedRef = useRef(false);
@@ -83,15 +96,30 @@ function CaptureScene({
     framedRef.current = true;
   }, []);
 
+  // A lost WebGL context (common on mobile Safari, which caps live contexts)
+  // means this capture can never produce a valid frame — fail over to the
+  // static image instead of leaving the tile spinning.
   useEffect(() => {
-    // Poll until the model is both loaded (framed) and has had a moment to draw,
-    // then grab a single frame. Falls back after a max wait so we never hang.
+    const el = gl.domElement;
+    const onLost = (e: Event) => {
+      e.preventDefault();
+      if (!capturedRef.current) {
+        capturedRef.current = true;
+        onFail();
+      }
+    };
+    el.addEventListener("webglcontextlost", onLost);
+    return () => el.removeEventListener("webglcontextlost", onLost);
+  }, [gl, onFail]);
+
+  useEffect(() => {
+    // Poll until the model is loaded AND framed, then grab a single frame.
+    // If framing never happens within the window (slow parse, failed fetch),
+    // fail over to the static image — an unframed shot would just be black.
     const start = Date.now();
     const tick = setInterval(() => {
       if (capturedRef.current) return;
-      const ready = framedRef.current;
-      const timedOut = Date.now() - start > 6000;
-      if (ready || timedOut) {
+      if (framedRef.current) {
         capturedRef.current = true;
         clearInterval(tick);
         // One extra beat for the splat material to paint at the new framing.
@@ -100,42 +128,18 @@ function CaptureScene({
           const dataUrl = gl.domElement.toDataURL("image/jpeg", 0.85);
           thumbnailCache.set(rawUrl, dataUrl);
           onCapture(dataUrl);
-          finishCapture();
         }, 350);
+      } else if (Date.now() - start > 10000) {
+        capturedRef.current = true;
+        clearInterval(tick);
+        onFail();
       }
     }, 200);
 
-    return () => {
-      clearInterval(tick);
-      if (!capturedRef.current) finishCapture();
-    };
-  }, [gl, scene, camera, rawUrl, onCapture]);
+    return () => clearInterval(tick);
+  }, [gl, scene, camera, rawUrl, onCapture, onFail]);
 
   return <ThumbnailRig bounds={data?.bounds ?? null} onFramed={handleFramed} />;
-}
-
-function SplatPreview({
-  splatUrl,
-  rawUrl,
-  onCapture,
-}: {
-  splatUrl: string;
-  rawUrl: string;
-  onCapture?: (dataUrl: string) => void;
-}) {
-  return (
-    <>
-      <PerspectiveCamera makeDefault position={[0, 0.5, 3]} fov={45} />
-      <ambientLight intensity={0.8} />
-      <directionalLight position={[5, 5, 5]} intensity={0.5} />
-      <Suspense fallback={null}>
-        <Splat src={splatUrl} />
-      </Suspense>
-      {onCapture && (
-        <CaptureScene splatUrl={splatUrl} rawUrl={rawUrl} onCapture={onCapture} />
-      )}
-    </>
-  );
 }
 
 export function SplatThumbnail({ splatUrl, fallbackImage, className }: SplatThumbnailProps) {
@@ -146,21 +150,56 @@ export function SplatThumbnail({ splatUrl, fallbackImage, className }: SplatThum
     () => thumbnailCache.get(splatUrl) || null
   );
   const [isCapturing, setIsCapturing] = useState(false);
-  const [hasRequestedCapture, setHasRequestedCapture] = useState(false);
+  // Capture failed (lost context / timeout): show the static image, no spinner.
+  // Not cached — a later mount may succeed and upgrade the tile.
+  const [failed, setFailed] = useState(false);
+
+  // The slot token this tile currently holds (null when queued or done).
+  const tokenRef = useRef<symbol | null>(null);
 
   const handleCapture = useCallback((dataUrl: string) => {
     setCachedThumbnail(dataUrl);
     setIsCapturing(false);
+    releaseCapture(tokenRef.current);
+    tokenRef.current = null;
   }, []);
 
-  // Queue a one-time capture on mount if we don't already have a snapshot.
+  const handleFail = useCallback(() => {
+    setFailed(true);
+    setIsCapturing(false);
+    releaseCapture(tokenRef.current);
+    tokenRef.current = null;
+  }, []);
+
+  // Queue a one-time capture; the cleanup removes our pending entry and
+  // releases any slot we still hold, so an unmount mid-queue or mid-capture
+  // (user navigates away) can never wedge the queue.
   useEffect(() => {
-    if (!cachedThumbnail && !hasRequestedCapture) {
-      setHasRequestedCapture(true);
-      captureQueue.push(() => setIsCapturing(true));
-      processQueue();
-    }
-  }, [cachedThumbnail, hasRequestedCapture]);
+    if (cachedThumbnail) return;
+    const thunk: CaptureThunk = (token) => {
+      tokenRef.current = token;
+      setIsCapturing(true);
+    };
+    captureQueue.push(thunk);
+    processQueue();
+    return () => {
+      const i = captureQueue.indexOf(thunk);
+      if (i >= 0) captureQueue.splice(i, 1);
+      releaseCapture(tokenRef.current);
+      tokenRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Watchdog outside the Canvas: if we hold the slot but no frame (or failure)
+  // arrived — e.g. the Canvas died before its scene mounted — fail over rather
+  // than spin forever. handleFail's release is token-idempotent, so firing
+  // late is harmless.
+  useEffect(() => {
+    if (!isCapturing) return;
+    const t = setTimeout(() => handleFail(), 15000);
+    return () => clearTimeout(t);
+  }, [isCapturing, handleFail]);
 
   return (
     <div className={`relative ${className}`}>
@@ -173,29 +212,65 @@ export function SplatThumbnail({ splatUrl, fallbackImage, className }: SplatThum
         />
       )}
 
-      {/* Fallback image + spinner while the snapshot is being produced. */}
+      {/* Static image: dimmed + spinner while capturing, full-strength if the
+          snapshot failed and the photo is what we're left with. */}
       {!cachedThumbnail && (
         <div className="absolute inset-0 w-full h-full">
           {fallbackImage ? (
-            <img src={fallbackImage} alt="" className="w-full h-full object-cover opacity-60" />
+            <img
+              src={fallbackImage}
+              alt=""
+              className={`w-full h-full object-cover ${failed ? "" : "opacity-60"}`}
+            />
           ) : (
-            <div className="w-full h-full bg-secondary animate-pulse" />
+            <div className={`w-full h-full bg-secondary ${failed ? "" : "animate-pulse"}`} />
           )}
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-          </div>
+          {!failed && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
         </div>
       )}
 
       {/* Offscreen render that produces the snapshot, then unmounts. */}
-      {isCapturing && !cachedThumbnail && (
+      {isCapturing && !cachedThumbnail && !failed && (
         <Canvas
           className="!absolute inset-0 opacity-0 pointer-events-none"
           gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
         >
-          <SplatPreview splatUrl={loadUrl} rawUrl={splatUrl} onCapture={handleCapture} />
+          <SplatPreviewInner
+            splatUrl={loadUrl}
+            rawUrl={splatUrl}
+            onCapture={handleCapture}
+            onFail={handleFail}
+          />
         </Canvas>
       )}
     </div>
+  );
+}
+
+function SplatPreviewInner({
+  splatUrl,
+  rawUrl,
+  onCapture,
+  onFail,
+}: {
+  splatUrl: string;
+  rawUrl: string;
+  onCapture: (dataUrl: string) => void;
+  onFail: () => void;
+}) {
+  return (
+    <>
+      <PerspectiveCamera makeDefault position={[0, 0.5, 3]} fov={45} />
+      <ambientLight intensity={0.8} />
+      <directionalLight position={[5, 5, 5]} intensity={0.5} />
+      <Suspense fallback={null}>
+        <Splat src={splatUrl} />
+      </Suspense>
+      <CaptureScene splatUrl={splatUrl} rawUrl={rawUrl} onCapture={onCapture} onFail={onFail} />
+    </>
   );
 }
