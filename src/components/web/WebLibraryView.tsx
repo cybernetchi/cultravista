@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Grid, List, Filter, SortAsc, Loader2 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { WebScanCard } from "./WebScanCard";
 import { Scan } from "@/types/scan";
@@ -49,6 +50,24 @@ interface WebLibraryViewProps {
 
 export function WebLibraryView({ onSelectScan, searchQuery }: WebLibraryViewProps) {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const queryClient = useQueryClient();
+
+  // Delete a stuck/failed capture (offered on its card, behind a confirm).
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const result = await CaptureService.deleteCapture(id);
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to delete capture');
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['captures'] });
+      toast.success('Capture deleted');
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete capture');
+    },
+  });
 
   const { data: captures, isLoading, error } = useQuery({
     queryKey: ['captures'],
@@ -152,6 +171,7 @@ export function WebLibraryView({ onSelectScan, searchQuery }: WebLibraryViewProp
                 onClick={() => onSelectScan(scan)}
                 viewMode={viewMode}
                 index={index}
+                onDelete={() => deleteMutation.mutate(scan.id)}
               />
             ))}
           </div>

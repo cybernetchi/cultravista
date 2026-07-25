@@ -1,16 +1,76 @@
 import { Scan } from "@/types/scan";
 import { cn } from "@/lib/utils";
-import { Calendar, MapPin, MoreVertical, Star, Loader2 } from "lucide-react";
+import { Calendar, MapPin, MoreVertical, Star, Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 interface WebScanCardProps {
   scan: Scan;
   onClick: () => void;
   viewMode: "grid" | "list";
   index: number;
+  /** Delete this capture (offered only for processing/failed cards). */
+  onDelete?: () => void;
 }
 
-export function WebScanCard({ scan, onClick, viewMode, index }: WebScanCardProps) {
+// Confirm-guarded delete trigger for stuck ("Processing") or failed captures.
+// Rendered inside a card, so clicks must not bubble into the card handler.
+function DeleteCaptureButton({
+  scan,
+  isProcessing,
+  onDelete,
+}: {
+  scan: Scan;
+  isProcessing: boolean;
+  onDelete: () => void;
+}) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 bg-background/50 backdrop-blur-sm text-muted-foreground hover:text-destructive"
+          onClick={(e) => e.stopPropagation()}
+          title="Delete capture"
+        >
+          <Trash2 className="w-4 h-4" />
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete “{scan.title}”?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {isProcessing
+              ? "This capture is still marked as processing. If it is stuck, deleting removes it from your library permanently; if processing is genuinely underway, that work will be discarded."
+              : "This capture failed to process. Deleting removes it from your library permanently."}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={onDelete}
+          >
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+export function WebScanCard({ scan, onClick, viewMode, index, onDelete }: WebScanCardProps) {
   // Processing state: status 0 = processing, or status 1 complete but no folderPath yet
   const isProcessing = scan.status === 0 || (scan.status === 1 && !scan.folderPath);
   const isFailed = scan.status === 2;
@@ -101,14 +161,21 @@ export function WebScanCard({ scan, onClick, viewMode, index }: WebScanCardProps
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <Star className="w-4 h-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <MoreVertical className="w-4 h-4" />
-          </Button>
-        </div>
+        {(isProcessing || isFailed) && onDelete ? (
+          // Stuck/failed rows: always-visible delete so cleanup is discoverable.
+          <div className="flex items-center gap-2">
+            <DeleteCaptureButton scan={scan} isProcessing={isProcessing} onDelete={onDelete} />
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <Button variant="ghost" size="icon" className="h-8 w-8">
+              <Star className="w-4 h-4" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8">
+              <MoreVertical className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
       </div>
     );
   }
@@ -160,6 +227,13 @@ export function WebScanCard({ scan, onClick, viewMode, index }: WebScanCardProps
           <span className="text-xs text-muted-foreground">{formattedDate}</span>
         </div>
       </div>
+
+      {/* Delete for stuck/failed cards — always visible so cleanup is discoverable */}
+      {(isProcessing || isFailed) && onDelete && (
+        <div className="absolute top-3 right-3 z-30">
+          <DeleteCaptureButton scan={scan} isProcessing={isProcessing} onDelete={onDelete} />
+        </div>
+      )}
 
       {/* Hover actions - only show when clickable */}
       {isClickable && (
