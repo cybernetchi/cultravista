@@ -16,8 +16,33 @@ interface SplatThumbnailProps {
   className?: string;
 }
 
-// Cache captured thumbnails by URL so we render each model only once per session.
+// Cache captured thumbnails by URL — in memory for this session, and in
+// localStorage so revisits (and the other layout, web/mobile) show the model
+// snapshot instantly instead of re-rendering it. Keyed by the splat URL, so an
+// edited/cropped model (new URL) naturally gets a fresh snapshot.
+const CACHE_PREFIX = "cv-splat-thumb:";
 const thumbnailCache = new Map<string, string>();
+
+function readCachedThumbnail(url: string): string | null {
+  const mem = thumbnailCache.get(url);
+  if (mem) return mem;
+  try {
+    const stored = localStorage.getItem(CACHE_PREFIX + url);
+    if (stored) thumbnailCache.set(url, stored);
+    return stored;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedThumbnail(url: string, dataUrl: string) {
+  thumbnailCache.set(url, dataUrl);
+  try {
+    localStorage.setItem(CACHE_PREFIX + url, dataUrl);
+  } catch {
+    // Quota exceeded / privacy mode — in-memory cache still applies.
+  }
+}
 
 // One WebGL capture at a time — many library tiles would otherwise spin up too
 // many GL contexts at once (mobile Safari in particular kills contexts fast).
@@ -147,7 +172,7 @@ function CaptureScene({
           capturedRef.current = true;
           clearInterval(tick);
           const dataUrl = gl.domElement.toDataURL("image/jpeg", 0.85);
-          thumbnailCache.set(rawUrl, dataUrl);
+          writeCachedThumbnail(rawUrl, dataUrl);
           onCapture(dataUrl);
           return;
         }
@@ -170,7 +195,7 @@ export function SplatThumbnail({ splatUrl, fallbackImage, className }: SplatThum
   const loadUrl = resolveSplatUrl(splatUrl);
 
   const [cachedThumbnail, setCachedThumbnail] = useState<string | null>(
-    () => thumbnailCache.get(splatUrl) || null
+    () => readCachedThumbnail(splatUrl)
   );
   const [isCapturing, setIsCapturing] = useState(false);
   // Capture failed (lost context / timeout): show the static image, no spinner.
