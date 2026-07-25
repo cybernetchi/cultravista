@@ -113,28 +113,51 @@ function CaptureScene({
   }, [gl, onFail]);
 
   useEffect(() => {
-    // Poll until the model is loaded AND framed, then grab a single frame.
-    // If framing never happens within the window (slow parse, failed fetch),
-    // fail over to the static image — an unframed shot would just be black.
+    // Once the model is framed, render and check the frame actually contains
+    // lit pixels before accepting it: drei's <Splat> sorts its gaussians in a
+    // web worker, so early frames after a camera jump are often still black.
+    // Retry until something renders; if nothing ever does (slow parse, failed
+    // fetch, worker death), fail over to the static image — never cache black.
     const start = Date.now();
+
+    const frameHasContent = (): boolean => {
+      const ctx = gl.getContext();
+      const w = gl.domElement.width;
+      const h = gl.domElement.height;
+      if (!ctx || w === 0 || h === 0) return false;
+      // Sample three horizontal lines (25%, 50%, 75% height); a framed object
+      // crosses at least one of them.
+      const row = new Uint8Array(w * 4);
+      let lit = 0;
+      for (const fy of [0.25, 0.5, 0.75]) {
+        ctx.readPixels(0, Math.floor(h * fy), w, 1, ctx.RGBA, ctx.UNSIGNED_BYTE, row);
+        for (let i = 0; i < row.length; i += 4) {
+          if (row[i] + row[i + 1] + row[i + 2] > 30) lit++;
+        }
+      }
+      return lit > 8;
+    };
+
     const tick = setInterval(() => {
       if (capturedRef.current) return;
+      const timedOut = Date.now() - start > 12000;
       if (framedRef.current) {
-        capturedRef.current = true;
-        clearInterval(tick);
-        // One extra beat for the splat material to paint at the new framing.
-        setTimeout(() => {
-          gl.render(scene, camera);
+        gl.render(scene, camera);
+        if (frameHasContent()) {
+          capturedRef.current = true;
+          clearInterval(tick);
           const dataUrl = gl.domElement.toDataURL("image/jpeg", 0.85);
           thumbnailCache.set(rawUrl, dataUrl);
           onCapture(dataUrl);
-        }, 350);
-      } else if (Date.now() - start > 10000) {
+          return;
+        }
+      }
+      if (timedOut) {
         capturedRef.current = true;
         clearInterval(tick);
         onFail();
       }
-    }, 200);
+    }, 400);
 
     return () => clearInterval(tick);
   }, [gl, scene, camera, rawUrl, onCapture, onFail]);
@@ -221,6 +244,12 @@ export function SplatThumbnail({ splatUrl, fallbackImage, className }: SplatThum
               src={fallbackImage}
               alt=""
               className={`w-full h-full object-cover ${failed ? "" : "opacity-60"}`}
+              onError={(e) => {
+                // A dead fallback URL (e.g. seeded external image) would leave
+                // the tile black — swap in the bundled placeholder instead.
+                const img = e.currentTarget;
+                if (!img.src.endsWith("/placeholder.svg")) img.src = "/placeholder.svg";
+              }}
             />
           ) : (
             <div className={`w-full h-full bg-secondary ${failed ? "" : "animate-pulse"}`} />
