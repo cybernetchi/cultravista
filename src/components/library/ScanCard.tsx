@@ -1,30 +1,30 @@
-import { Scan } from "@/types/scan";
+import { Capture, deliverySplatUrl } from "@/services/captureService";
+import { SplatThumbnail } from "@/components/web/SplatThumbnail";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 
 interface ScanCardProps {
-  scan: Scan;
+  capture: Capture;
   onClick: () => void;
   index: number;
 }
 
-export function ScanCard({ scan, onClick, index }: ScanCardProps) {
-  // Processing state: status 0 = processing, or status 1 complete but no folderPath yet
-  const isProcessing = scan.status === 0 || (scan.status === 1 && !scan.folderPath);
-  const isFailed = scan.status === 2;
-  const isClickable = scan.status === 1 && scan.folderPath;
+export function ScanCard({ capture, onClick, index }: ScanCardProps) {
+  // Processing state: status 0 = processing, or status 1 complete but no
+  // folder_path yet (Lambda still converting PLY→splat).
+  const isProcessing = capture.status === 0 || (capture.status === 1 && !capture.folder_path);
+  const isFailed = capture.status === 2;
+  const isClickable = capture.status === 1 && !!capture.folder_path;
 
   const getStatusLabel = () => {
-    if (scan.status === 0) return "Processing";
-    if (scan.status === 2) return "Failed";
-    if (scan.status === 1 && !scan.folderPath) return "Converting";
+    if (capture.status === 0) return "Processing";
+    if (capture.status === 2) return "Failed";
+    if (capture.status === 1 && !capture.folder_path) return "Converting";
     return "";
   };
 
   const handleClick = () => {
-    if (isClickable) {
-      onClick();
-    }
+    if (isClickable) onClick();
   };
 
   return (
@@ -40,42 +40,46 @@ export function ScanCard({ scan, onClick, index }: ScanCardProps) {
       )}
       style={{ animationDelay: `${index * 100}ms` }}
     >
-      <img
-        src={scan.thumbnail}
-        alt={scan.title}
-        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-      />
-      
+      {/* Completed captures show a snapshot of the actual 3D model (same as the
+          web library); processing/failed ones fall back to the source photo. */}
+      {isClickable && deliverySplatUrl(capture) ? (
+        // NB: sized box, not "absolute inset-0" — SplatThumbnail's root is
+        // position:relative, and Tailwind resolves relative+absolute in favour
+        // of relative, so an inset-based size collapses to zero height.
+        <SplatThumbnail
+          splatUrl={deliverySplatUrl(capture)!}
+          fallbackImage={capture.thumbnail || "/placeholder.svg"}
+          captureId={capture.id}
+          className="w-full h-full"
+        />
+      ) : (
+        <img
+          src={capture.thumbnail || "/placeholder.svg"}
+          alt={capture.title}
+          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+        />
+      )}
+
       {/* Processing/Failed overlay */}
       {(isProcessing || isFailed) && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
           <div className="flex flex-col items-center gap-2">
-            {isProcessing && (
-              <Loader2 className="h-6 w-6 text-white animate-spin" />
-            )}
-            <span className={cn(
-              "text-sm font-medium",
-              isFailed ? "text-red-400" : "text-white"
-            )}>
+            {isProcessing && <Loader2 className="h-6 w-6 text-white animate-spin" />}
+            <span className={cn("text-sm font-medium", isFailed ? "text-red-400" : "text-white")}>
               {getStatusLabel()}
             </span>
           </div>
         </div>
       )}
-      
+
       {/* Gradient overlay */}
       <div className="absolute inset-0 bg-gradient-to-t from-background via-background/20 to-transparent opacity-80" />
-      
+
       {/* Content */}
       <div className="absolute bottom-0 left-0 right-0 p-3 z-20">
-        <h3 className="text-sm font-semibold text-foreground truncate">
-          {scan.title}
-        </h3>
-        <p className="text-xs text-primary font-medium">
-          {scan.authorHandle}
-        </p>
+        <h3 className="text-sm font-semibold text-foreground truncate">{capture.title}</h3>
       </div>
-      
+
       {/* Hover glow effect */}
       {isClickable && (
         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none">

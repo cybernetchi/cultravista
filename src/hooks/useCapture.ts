@@ -273,33 +273,56 @@ export const useProcessingFlow = (
   const triggerConversion = React.useCallback(async () => {
     if (!serialize || !captureId) return;
 
+    // KIRI can report "successful" a beat before the model zip is actually
+    // packaged, so the first zip fetch (or conversion trigger) may fail
+    // transiently. Retry with backoff before declaring the capture failed —
+    // a single hiccup here used to permanently mark good reconstructions as
+    // failed even though KIRI had succeeded.
+    const withRetries = async <T,>(label: string, fn: () => Promise<T>): Promise<T> => {
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          return await fn();
+        } catch (error) {
+          lastError = error;
+          console.warn(`${label} attempt ${attempt + 1} failed, retrying…`, error);
+          await new Promise((r) => setTimeout(r, 5000 * (attempt + 1)));
+        }
+      }
+      throw lastError;
+    };
+
     try {
       // Step 1: Get the model zip URL from KIRI
-      const modelData = await getModelZip.mutateAsync(serialize);
-      
+      const modelData = await withRetries('Model zip fetch', () =>
+        getModelZip.mutateAsync(serialize)
+      );
+
       console.log('Model zip response:', modelData);
-      
+
       // KIRI API returns modelUrl, not splatUrl
       const modelUrl = modelData?.modelUrl || modelData?.splatUrl;
-      
+
       if (!modelUrl) {
         throw new Error('No model URL returned from KIRI');
       }
 
       // Step 2: Trigger Lambda conversion (fire-and-forget)
       // The edge function returns immediately and updates the database when Lambda completes
-      await convertToSplat.mutateAsync({
-        s3Url: modelUrl,
-        captureId,
-      });
-      
+      await withRetries('Conversion trigger', () =>
+        convertToSplat.mutateAsync({
+          s3Url: modelUrl,
+          captureId,
+        })
+      );
+
       // Mark conversion as triggered - we'll poll the capture table for completion
       setConversionTriggered(true);
       console.log('Lambda conversion triggered, will poll for completion');
 
       queryClient.invalidateQueries({ queryKey: ['captures'] });
     } catch (error) {
-      console.error('Conversion flow failed:', error);
+      console.error('Conversion flow failed after retries:', error);
       // Update status to failed
       if (captureId) {
         await CaptureService.updateCapture(captureId, { status: 2 });

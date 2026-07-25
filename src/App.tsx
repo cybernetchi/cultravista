@@ -11,6 +11,7 @@ import Auth from "./pages/Auth";
 import IframeViewer from "./pages/IframeViewer";
 import Exhibit from "./pages/Exhibit";
 import NotFound from "./pages/NotFound";
+import DevThumbTest from "./pages/DevThumbTest";
 
 const queryClient = new QueryClient();
 
@@ -37,6 +38,10 @@ const App = () => (
               <Route path="/iframe-viewer" element={<IframeViewer />} />
               {/* Public exhibit page — published captures only (RLS-enforced). */}
               <Route path="/exhibit/:slug" element={<Exhibit />} />
+              {/* Dev-only thumbnail harness (not present in production builds). */}
+              {import.meta.env.DEV && (
+                <Route path="/dev-thumbtest" element={<DevThumbTest />} />
+              )}
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>

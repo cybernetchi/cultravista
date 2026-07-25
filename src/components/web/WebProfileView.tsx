@@ -1,113 +1,110 @@
-import { cn } from "@/lib/utils";
-import { Camera, Settings, ExternalLink, Grid, Star, Heart } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useQuery } from "@tanstack/react-query";
+import { Grid, Loader2 } from "lucide-react";
+import { Scan } from "@/types/scan";
+import { CaptureService, Capture, captureToScan } from "@/services/captureService";
+import { useAuth } from "@/contexts/AuthContext";
+import { WebScanCard } from "./WebScanCard";
 
-import scan1 from "@/assets/scans/scan-1.jpg";
-import scan2 from "@/assets/scans/scan-2.jpg";
-import scan3 from "@/assets/scans/scan-3.jpg";
+interface WebProfileViewProps {
+  onSelectScan: (scan: Scan) => void;
+}
 
-export function WebProfileView() {
-  const userScans = [
-    { id: "1", thumbnail: scan1, title: "Al-Habis" },
-    { id: "2", thumbnail: scan2, title: "Baby Yoda" },
-    { id: "3", thumbnail: scan3, title: "Droughdool Mote" },
-  ];
+// The user's profile: real identity (from auth) and their real captures.
+// Social features (followers, stars, view counts) are intentionally omitted —
+// there's no backend for them yet, so we don't fake them.
+export function WebProfileView({ onSelectScan }: WebProfileViewProps) {
+  const { user } = useAuth();
+
+  const { data: captures, isLoading, error } = useQuery({
+    queryKey: ["captures"],
+    queryFn: async () => {
+      const result = await CaptureService.getAllCaptures();
+      if (!result.success) throw new Error(result.error || "Failed to fetch captures");
+      return result.data || [];
+    },
+  });
+
+  const scans = (captures || []).map(captureToScan);
+
+  // Derive display name + initial from the auth identity.
+  const email = user?.email ?? "";
+  const displayName =
+    (user?.user_metadata?.full_name as string | undefined) ||
+    (user?.user_metadata?.name as string | undefined) ||
+    (email ? email.split("@")[0] : "Your profile");
+  const handle = email ? `@${email.split("@")[0]}` : "";
+  const initial = (displayName[0] || "?").toUpperCase();
 
   return (
     <div className="flex-1 overflow-y-auto">
       {/* Cover */}
-      <div className="h-48 bg-gradient-to-br from-primary/20 via-background to-primary/5 relative">
-        <Button variant="glass" size="sm" className="absolute top-4 right-4 gap-2">
-          <Camera className="w-4 h-4" />
-          Edit Cover
-        </Button>
-      </div>
+      <div className="h-48 bg-gradient-to-br from-primary/20 via-background to-primary/5" />
 
       {/* Profile header */}
       <div className="max-w-4xl mx-auto px-8 -mt-16 relative z-10">
         <div className="flex items-end gap-6">
           {/* Avatar */}
           <div className="w-32 h-32 rounded-2xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center border-4 border-background shadow-xl">
-            <span className="text-primary-foreground font-bold text-4xl">A</span>
+            <span className="text-primary-foreground font-bold text-4xl">{initial}</span>
           </div>
 
           {/* Info */}
           <div className="flex-1 pb-2">
-            <h1 className="text-2xl font-bold text-foreground">Alex Designer</h1>
-            <p className="text-muted-foreground">@alexdesigner</p>
-          </div>
-
-          {/* Actions */}
-          <div className="flex gap-3 pb-2">
-            <Button variant="captureOutline">Edit Profile</Button>
-            <Button variant="icon" size="icon">
-              <Settings className="w-5 h-5" />
-            </Button>
+            <h1 className="text-2xl font-bold text-foreground">{displayName}</h1>
+            {handle && <p className="text-muted-foreground">{handle}</p>}
           </div>
         </div>
 
-        {/* Bio */}
-        <p className="mt-6 text-muted-foreground max-w-2xl">
-          Digital heritage preservationist and 3D scanning enthusiast. Capturing the world's cultural artifacts one scan at a time.
-        </p>
-
-        {/* Stats */}
+        {/* Stats — only what we can truthfully count. */}
         <div className="flex gap-8 mt-6 py-6 border-y border-border">
           <div>
-            <div className="text-2xl font-bold text-foreground">247</div>
+            <div className="text-2xl font-bold text-foreground">
+              {isLoading ? "—" : scans.length}
+            </div>
             <div className="text-sm text-muted-foreground">Scans</div>
           </div>
           <div>
-            <div className="text-2xl font-bold text-foreground">12.4K</div>
-            <div className="text-sm text-muted-foreground">Total Views</div>
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-foreground">892</div>
-            <div className="text-sm text-muted-foreground">Stars</div>
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-foreground">156</div>
-            <div className="text-sm text-muted-foreground">Following</div>
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-foreground">2.1K</div>
-            <div className="text-sm text-muted-foreground">Followers</div>
+            <div className="text-2xl font-bold text-foreground">
+              {isLoading ? "—" : scans.filter((s) => s.published).length}
+            </div>
+            <div className="text-sm text-muted-foreground">Published</div>
           </div>
         </div>
 
-        {/* Tabs */}
+        {/* Tab (single, real one for now) */}
         <div className="flex gap-6 mt-6">
-          <button className="flex items-center gap-2 pb-3 border-b-2 border-primary text-primary font-medium">
+          <div className="flex items-center gap-2 pb-3 border-b-2 border-primary text-primary font-medium">
             <Grid className="w-4 h-4" />
             My Scans
-          </button>
-          <button className="flex items-center gap-2 pb-3 border-b-2 border-transparent text-muted-foreground hover:text-foreground transition-colors">
-            <Star className="w-4 h-4" />
-            Starred
-          </button>
-          <button className="flex items-center gap-2 pb-3 border-b-2 border-transparent text-muted-foreground hover:text-foreground transition-colors">
-            <Heart className="w-4 h-4" />
-            Collections
-          </button>
+          </div>
         </div>
 
-        {/* Scans grid */}
-        <div className="grid grid-cols-3 gap-4 mt-6 pb-8">
-          {userScans.map((scan) => (
-            <div
-              key={scan.id}
-              className="group aspect-square rounded-xl overflow-hidden bg-card cursor-pointer relative"
-            >
-              <img
-                src={scan.thumbnail}
-                alt={scan.title}
-                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-background/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
-                <span className="text-foreground font-medium">{scan.title}</span>
-              </div>
+        {/* Real scans grid */}
+        <div className="mt-6 pb-8">
+          {isLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
             </div>
-          ))}
+          ) : error ? (
+            <p className="text-destructive py-8">Failed to load your scans.</p>
+          ) : scans.length === 0 ? (
+            <div className="text-center text-muted-foreground py-16">
+              <p>No scans yet</p>
+              <p className="text-sm">Create a capture to see it here.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+              {scans.map((scan, index) => (
+                <WebScanCard
+                  key={scan.id}
+                  scan={scan}
+                  onClick={() => onSelectScan(scan)}
+                  viewMode="grid"
+                  index={index}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -4,20 +4,27 @@ import { MobileFrame } from "@/components/layout/MobileFrame";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { LibraryView } from "@/components/library/LibraryView";
 import { ScanDetailView } from "@/components/detail/ScanDetailView";
-import { EditView } from "@/components/edit/EditView";
-import { AnnotateView } from "@/components/annotate/AnnotateView";
 import { CaptureView } from "@/components/capture/CaptureView";
 import { ProfileView } from "@/components/profile/ProfileView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { WebLayout } from "@/components/web/WebLayout";
-import { Scan, ViewMode } from "@/types/scan";
-import { toast } from "sonner";
+import { Capture } from "@/services/captureService";
+
+// Mobile view modes. Editing/annotation/cropping are desktop-only tools (see
+// PR6 scope), so the mobile flow is just: browse → view → capture.
+type MobileViewMode = "library" | "detail";
 
 const Index = () => {
   const isMobile = useIsMobile();
   const [activeTab, setActiveTab] = useState("library");
-  const [viewMode, setViewMode] = useState<ViewMode>("library");
-  const [selectedScan, setSelectedScan] = useState<Scan | null>(null);
+  const [viewMode, setViewMode] = useState<MobileViewMode>("library");
+  const [selectedCapture, setSelectedCapture] = useState<Capture | null>(null);
+  // Capture screen visibility vs. lifecycle: the view stays MOUNTED while an
+  // upload/KIRI run is in flight even if the user closes it, because the client
+  // drives the KIRI→Lambda handoff — unmounting mid-run would stall the capture
+  // at "Processing" forever. Closing just hides it; it unmounts when idle.
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [captureBusy, setCaptureBusy] = useState(false);
 
   // Use web layout for desktop
   if (!isMobile) {
@@ -25,83 +32,42 @@ const Index = () => {
   }
 
   // Mobile layout
-  const handleSelectScan = (scan: Scan) => {
-    setSelectedScan(scan);
+  const handleSelectCapture = (capture: Capture) => {
+    setSelectedCapture(capture);
     setViewMode("detail");
   };
 
   const handleStartCapture = () => {
-    setViewMode("capture");
+    setCaptureOpen(true);
   };
 
-  const handleBack = () => {
-    if (viewMode === "edit" || viewMode === "annotate") {
-      setViewMode("detail");
-    } else if (viewMode === "detail") {
-      setViewMode("library");
-      setSelectedScan(null);
-    } else {
-      setViewMode("library");
-    }
-  };
-
-  const handleSave = () => {
-    toast.success("Changes saved successfully!");
-    setViewMode("detail");
-  };
-
-  const handleCaptureComplete = () => {
-    toast.success("Scan saved to library!");
+  const handleBackToLibrary = () => {
+    setCaptureOpen(false);
     setViewMode("library");
+    setSelectedCapture(null);
   };
 
   const handleTabChange = (tab: string) => {
     if (tab === "capture") {
-      setViewMode("capture");
+      setCaptureOpen(true);
     } else {
       setActiveTab(tab);
       setViewMode("library");
-      setSelectedScan(null);
+      setSelectedCapture(null);
     }
   };
 
   const renderMainContent = () => {
-    if (viewMode === "capture") {
+    if (activeTab === "library") {
+      if (viewMode === "detail" && selectedCapture) {
+        return <ScanDetailView capture={selectedCapture} onBack={handleBackToLibrary} />;
+      }
       return (
-        <CaptureView
-          onClose={() => setViewMode("library")}
-          onComplete={handleCaptureComplete}
+        <LibraryView
+          onSelectCapture={handleSelectCapture}
+          onStartCapture={handleStartCapture}
         />
       );
-    }
-
-    if (activeTab === "library") {
-      switch (viewMode) {
-        case "detail":
-          return selectedScan ? (
-            <ScanDetailView
-              scan={selectedScan}
-              onBack={handleBack}
-              onEdit={() => setViewMode("edit")}
-              onAnnotate={() => setViewMode("annotate")}
-            />
-          ) : null;
-        case "edit":
-          return selectedScan ? (
-            <EditView scan={selectedScan} onBack={handleBack} onSave={handleSave} />
-          ) : null;
-        case "annotate":
-          return selectedScan ? (
-            <AnnotateView scan={selectedScan} onBack={handleBack} onSave={handleSave} />
-          ) : null;
-        default:
-          return (
-            <LibraryView
-              onSelectScan={handleSelectScan}
-              onStartCapture={handleStartCapture}
-            />
-          );
-      }
     }
 
     if (activeTab === "profile") {
@@ -114,17 +80,27 @@ const Index = () => {
 
     return (
       <LibraryView
-        onSelectScan={handleSelectScan}
+        onSelectCapture={handleSelectCapture}
         onStartCapture={handleStartCapture}
       />
     );
   };
 
-  const showBottomNav = viewMode === "library" && activeTab !== "capture";
+  const showBottomNav = viewMode === "library" && !captureOpen;
 
   return (
     <MobileFrame>
-      {renderMainContent()}
+      {!captureOpen && renderMainContent()}
+      {/* Mounted while open OR busy; hidden (not unmounted) when closed mid-run. */}
+      {(captureOpen || captureBusy) && (
+        <div className={captureOpen ? "flex-1 flex flex-col" : "hidden"}>
+          <CaptureView
+            onClose={() => setCaptureOpen(false)}
+            onComplete={handleBackToLibrary}
+            onBusyChange={setCaptureBusy}
+          />
+        </div>
+      )}
       {showBottomNav && (
         <BottomNav activeTab={activeTab} onTabChange={handleTabChange} />
       )}

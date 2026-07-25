@@ -88,7 +88,7 @@ export function WebLayout() {
                 searchQuery={searchQuery}
               />
             )}
-            {activeTab === "profile" && <WebProfileView />}
+            {activeTab === "profile" && <WebProfileView onSelectScan={handleSelectScan} />}
             {activeTab === "settings" && <WebSettingsView />}
           </main>
 

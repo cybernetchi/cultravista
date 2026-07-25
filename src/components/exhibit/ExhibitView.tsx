@@ -148,9 +148,11 @@ export function ExhibitView({ capture, annotations, embed = false }: ExhibitView
           </span>
           {langToggle}
         </div>
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20">{tourBar}</div>
+        {/* bottom-14 keeps the tour controls clear of the viewer's own
+            bottom-anchored controls hint. */}
+        <div className="absolute bottom-14 left-1/2 -translate-x-1/2 z-20">{tourBar}</div>
         {active && (annTitle || annBody) && (
-          <div className="absolute bottom-16 left-3 right-3 z-20 mx-auto max-w-md rounded-lg bg-card/90 backdrop-blur-sm border border-border p-3">
+          <div className="absolute bottom-28 left-3 right-3 z-20 mx-auto max-w-md rounded-lg bg-card/90 backdrop-blur-sm border border-border p-3">
             <p className="font-medium text-foreground text-sm">{annTitle || "Hotspot"}</p>
             {annBody && <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">{annBody}</p>}
           </div>
@@ -166,7 +168,9 @@ export function ExhibitView({ capture, annotations, embed = false }: ExhibitView
       <div className="relative flex-1 min-h-[45vh] md:min-h-0 bg-black">
         {viewer}
         <div className="absolute top-3 right-3 z-20">{langToggle}</div>
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20">{tourBar}</div>
+        {/* bottom-14 keeps the tour controls clear of the viewer's own
+            bottom-anchored controls hint. */}
+        <div className="absolute bottom-14 left-1/2 -translate-x-1/2 z-20">{tourBar}</div>
       </div>
 
       {/* Metadata */}
