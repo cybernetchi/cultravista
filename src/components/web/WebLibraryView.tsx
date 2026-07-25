@@ -1,10 +1,22 @@
 import { useState } from "react";
 import { Grid, List, Filter, SortAsc, Loader2 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { WebScanCard } from "./WebScanCard";
 import { Scan } from "@/types/scan";
-import { CaptureService, Capture, captureToScan } from "@/services/captureService";
+import { CaptureService, Capture, captureToScan, viewerIdentity } from "@/services/captureService";
+import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 
 interface WebLibraryViewProps {
@@ -14,6 +26,27 @@ interface WebLibraryViewProps {
 
 export function WebLibraryView({ onSelectScan, searchQuery }: WebLibraryViewProps) {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  // Failed scans can't open the detail panel, so deletion happens from the
+  // card itself via this confirm dialog.
+  const [scanToDelete, setScanToDelete] = useState<Scan | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  const handleConfirmDelete = async () => {
+    if (!scanToDelete) return;
+    setDeleteBusy(true);
+    const res = await CaptureService.deleteCapture(scanToDelete.id);
+    setDeleteBusy(false);
+    if (!res.success) {
+      toast.error(res.error || "Failed to delete scan");
+      return;
+    }
+    setScanToDelete(null);
+    queryClient.invalidateQueries({ queryKey: ["captures"] });
+    toast.success("Scan deleted");
+  };
 
   const { data: captures, isLoading, error } = useQuery({
     queryKey: ['captures'],
@@ -32,11 +65,12 @@ export function WebLibraryView({ onSelectScan, searchQuery }: WebLibraryViewProp
     },
   });
 
-  const scans = captures?.map(captureToScan) || [];
+  const viewer = viewerIdentity(user);
+  const scans = captures?.map((c) => captureToScan(c, viewer)) || [];
 
   const filteredScans = scans.filter(scan =>
     scan.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    scan.authorHandle.toLowerCase().includes(searchQuery.toLowerCase())
+    (scan.authorHandle && scan.authorHandle.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   if (isLoading) {
@@ -115,6 +149,7 @@ export function WebLibraryView({ onSelectScan, searchQuery }: WebLibraryViewProp
                 key={scan.id}
                 scan={scan}
                 onClick={() => onSelectScan(scan)}
+                onDelete={() => setScanToDelete(scan)}
                 viewMode={viewMode}
                 index={index}
               />
@@ -122,6 +157,33 @@ export function WebLibraryView({ onSelectScan, searchQuery }: WebLibraryViewProp
           </div>
         )}
       </div>
+
+      {/* Delete confirmation (failed scans are deleted straight from the card). */}
+      <AlertDialog open={!!scanToDelete} onOpenChange={(open) => !open && setScanToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete scan?</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{scanToDelete?.title}" will be permanently removed. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                // Keep the dialog open while the request is in flight.
+                e.preventDefault();
+                handleConfirmDelete();
+              }}
+              disabled={deleteBusy}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

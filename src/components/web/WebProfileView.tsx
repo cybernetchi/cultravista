@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Grid, Loader2 } from "lucide-react";
 import { Scan } from "@/types/scan";
-import { CaptureService, Capture, captureToScan } from "@/services/captureService";
+import { CaptureService, Capture, captureToScan, viewerIdentity } from "@/services/captureService";
 import { useAuth } from "@/contexts/AuthContext";
 import { WebScanCard } from "./WebScanCard";
 
@@ -24,7 +24,8 @@ export function WebProfileView({ onSelectScan }: WebProfileViewProps) {
     },
   });
 
-  const scans = (captures || []).map(captureToScan);
+  const viewer = viewerIdentity(user);
+  const scans = (captures || []).map((c) => captureToScan(c, viewer));
 
   // Derive display name + initial from the auth identity.
   const email = user?.email ?? "";

@@ -1,7 +1,18 @@
 import { useState } from "react";
 import { Search, Grid, List, Plus, Loader2, RefreshCw } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ScanCard } from "./ScanCard";
 import { CaptureService, Capture } from "@/services/captureService";
 import { cn } from "@/lib/utils";
@@ -14,6 +25,26 @@ interface LibraryViewProps {
 export function LibraryView({ onSelectCapture, onStartCapture }: LibraryViewProps) {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState("");
+  const queryClient = useQueryClient();
+
+  // Failed captures have no detail view, so they are deleted from the card
+  // via this confirm dialog.
+  const [captureToDelete, setCaptureToDelete] = useState<Capture | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  const handleConfirmDelete = async () => {
+    if (!captureToDelete) return;
+    setDeleteBusy(true);
+    const res = await CaptureService.deleteCapture(captureToDelete.id);
+    setDeleteBusy(false);
+    if (!res.success) {
+      toast.error(res.error || "Failed to delete capture");
+      return;
+    }
+    setCaptureToDelete(null);
+    queryClient.invalidateQueries({ queryKey: ["captures"] });
+    toast.success("Capture deleted");
+  };
 
   const { data: captures, isLoading, error, isFetching, refetch } = useQuery({
     queryKey: ["captures"],
@@ -113,6 +144,7 @@ export function LibraryView({ onSelectCapture, onStartCapture }: LibraryViewProp
                 key={capture.id}
                 capture={capture}
                 onClick={() => onSelectCapture(capture)}
+                onDelete={() => setCaptureToDelete(capture)}
                 index={index}
               />
             ))}
@@ -136,6 +168,36 @@ export function LibraryView({ onSelectCapture, onStartCapture }: LibraryViewProp
       >
         <Plus className="w-6 h-6" />
       </button>
+
+      {/* Delete confirmation for failed captures. */}
+      <AlertDialog
+        open={!!captureToDelete}
+        onOpenChange={(open) => !open && setCaptureToDelete(null)}
+      >
+        <AlertDialogContent className="max-w-[calc(100vw-2rem)] rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete capture?</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{captureToDelete?.title}" will be permanently removed. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                // Keep the dialog open while the request is in flight.
+                e.preventDefault();
+                handleConfirmDelete();
+              }}
+              disabled={deleteBusy}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

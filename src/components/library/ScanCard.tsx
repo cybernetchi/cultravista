@@ -1,15 +1,17 @@
 import { Capture, deliverySplatUrl } from "@/services/captureService";
 import { SplatThumbnail } from "@/components/web/SplatThumbnail";
 import { cn } from "@/lib/utils";
-import { Loader2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 
 interface ScanCardProps {
   capture: Capture;
   onClick: () => void;
+  /** Asks the parent to confirm + delete. Shown on failed scans, which have no detail view. */
+  onDelete?: () => void;
   index: number;
 }
 
-export function ScanCard({ capture, onClick, index }: ScanCardProps) {
+export function ScanCard({ capture, onClick, onDelete, index }: ScanCardProps) {
   // Processing state: status 0 = processing, or status 1 complete but no
   // folder_path yet (Lambda still converting PLY→splat).
   const isProcessing = capture.status === 0 || (capture.status === 1 && !capture.folder_path);
@@ -28,17 +30,21 @@ export function ScanCard({ capture, onClick, index }: ScanCardProps) {
   };
 
   return (
+    // A wrapper div (not the card button itself) hosts the delete control —
+    // nesting a <button> inside a <button> is invalid HTML.
+    <div
+      className="relative animate-fade-up"
+      style={{ animationDelay: `${index * 100}ms` }}
+    >
     <button
       onClick={handleClick}
       disabled={!isClickable}
       className={cn(
-        "group relative aspect-square rounded-2xl overflow-hidden bg-card",
+        "group relative w-full aspect-square rounded-2xl overflow-hidden bg-card",
         "transition-all duration-500",
-        "animate-fade-up",
         isClickable && "hover:scale-[1.02] active:scale-[0.98] cursor-pointer",
         !isClickable && "cursor-not-allowed opacity-80"
       )}
-      style={{ animationDelay: `${index * 100}ms` }}
     >
       {/* Completed captures show a snapshot of the actual 3D model (same as the
           web library); processing/failed ones fall back to the source photo. */}
@@ -87,5 +93,23 @@ export function ScanCard({ capture, onClick, index }: ScanCardProps) {
         </div>
       )}
     </button>
+
+    {/* Delete for failed captures — sibling of the card button, above it. */}
+    {isFailed && onDelete && (
+      <button
+        type="button"
+        onClick={onDelete}
+        aria-label={`Delete failed capture ${capture.title}`}
+        className={cn(
+          "absolute top-2 right-2 z-30",
+          "flex h-9 w-9 items-center justify-center rounded-lg",
+          "bg-black/60 text-red-400 backdrop-blur-sm",
+          "active:scale-95 transition-transform"
+        )}
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    )}
+    </div>
   );
 }

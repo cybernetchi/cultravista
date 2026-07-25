@@ -265,7 +265,9 @@ export function WebDetailPanel({ scan, onClose, onEdit, onAnnotate, onCrop }: We
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h1 className="text-lg font-bold text-foreground">{displayTitle}</h1>
-                  <p className="text-sm text-muted-foreground mt-1">{scan.authorHandle}</p>
+                  {scan.authorHandle && (
+                    <p className="text-sm text-muted-foreground mt-1">{scan.authorHandle}</p>
+                  )}
                 </div>
                 <div className="flex gap-1.5 shrink-0">
                   {hasZh && (
