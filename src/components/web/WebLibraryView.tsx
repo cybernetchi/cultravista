@@ -4,43 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { WebScanCard } from "./WebScanCard";
 import { Scan } from "@/types/scan";
-import { CaptureService, Capture, deliverySplatUrl } from "@/services/captureService";
+import { CaptureService, Capture, captureToScan } from "@/services/captureService";
 import { cn } from "@/lib/utils";
-
-// Convert database capture to Scan type
-function captureToScan(capture: Capture): Scan {
-  const folderPath = capture.folder_path || undefined;
-  const splatUrl = deliverySplatUrl(capture);
-
-  return {
-    id: capture.id,
-    title: capture.title,
-    author: "User",
-    authorHandle: "@user",
-    thumbnail: capture.thumbnail || "/placeholder.svg",
-    createdAt: new Date(capture.created_at),
-    splatUrl,
-    status: capture.status, // 0=processing, 1=complete, 2=failed
-    folderPath,
-    // PR2 archival metadata
-    titleZhHant: capture.title_zh_hant,
-    description: capture.description,
-    descriptionZhHant: capture.description_zh_hant,
-    captureDate: capture.capture_date,
-    locationText: capture.location_text,
-    lat: capture.lat,
-    lng: capture.lng,
-    rightsLicense: capture.rights_license,
-    attribution: capture.attribution,
-    tags: capture.tags,
-    source: capture.source,
-    location: capture.location_text || undefined,
-    published: capture.published,
-    slug: capture.slug,
-    plyUrl: capture.ply_url,
-    spzUrl: capture.spz_url,
-  };
-}
 
 interface WebLibraryViewProps {
   onSelectScan: (scan: Scan) => void;

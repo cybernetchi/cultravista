@@ -1,7 +1,7 @@
 import { Scan } from "@/types/scan";
 import { cn } from "@/lib/utils";
-import { Calendar, MapPin, MoreVertical, Star, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Calendar, MapPin, Loader2 } from "lucide-react";
+import { SplatThumbnail } from "./SplatThumbnail";
 
 interface WebScanCardProps {
   scan: Scan;
@@ -36,6 +36,17 @@ export function WebScanCard({ scan, onClick, viewMode, index }: WebScanCardProps
   });
 
   const renderThumbnail = (className: string) => {
+    // Completed scans render a live snapshot of the actual 3D model; processing/
+    // failed ones (no usable splat yet) fall back to the static image.
+    if (isClickable && scan.splatUrl) {
+      return (
+        <SplatThumbnail
+          splatUrl={scan.splatUrl}
+          fallbackImage={scan.thumbnail}
+          className={className}
+        />
+      );
+    }
     return (
       <img
         src={scan.thumbnail}
@@ -99,16 +110,6 @@ export function WebScanCard({ scan, onClick, viewMode, index }: WebScanCardProps
             )}
           </div>
         </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <Star className="w-4 h-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <MoreVertical className="w-4 h-4" />
-          </Button>
-        </div>
       </div>
     );
   }
@@ -161,17 +162,6 @@ export function WebScanCard({ scan, onClick, viewMode, index }: WebScanCardProps
         </div>
       </div>
 
-      {/* Hover actions - only show when clickable */}
-      {isClickable && (
-        <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-30">
-          <Button variant="ghost" size="icon" className="h-8 w-8 bg-background/50 backdrop-blur-sm" onClick={(e) => e.stopPropagation()}>
-            <Star className="w-4 h-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8 bg-background/50 backdrop-blur-sm" onClick={(e) => e.stopPropagation()}>
-            <MoreVertical className="w-4 h-4" />
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

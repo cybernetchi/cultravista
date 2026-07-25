@@ -1,4 +1,5 @@
-import { Capture } from "@/services/captureService";
+import { Capture, deliverySplatUrl } from "@/services/captureService";
+import { SplatThumbnail } from "@/components/web/SplatThumbnail";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 
@@ -39,11 +40,21 @@ export function ScanCard({ capture, onClick, index }: ScanCardProps) {
       )}
       style={{ animationDelay: `${index * 100}ms` }}
     >
-      <img
-        src={capture.thumbnail || "/placeholder.svg"}
-        alt={capture.title}
-        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-      />
+      {/* Completed captures show a snapshot of the actual 3D model (same as the
+          web library); processing/failed ones fall back to the source photo. */}
+      {isClickable && deliverySplatUrl(capture) ? (
+        <SplatThumbnail
+          splatUrl={deliverySplatUrl(capture)!}
+          fallbackImage={capture.thumbnail || "/placeholder.svg"}
+          className="absolute inset-0"
+        />
+      ) : (
+        <img
+          src={capture.thumbnail || "/placeholder.svg"}
+          alt={capture.title}
+          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+        />
+      )}
 
       {/* Processing/Failed overlay */}
       {(isProcessing || isFailed) && (

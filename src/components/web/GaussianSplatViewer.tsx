@@ -56,7 +56,7 @@ export function resolveSplatUrl(src: string): string {
   return src;
 }
 
-interface SplatBounds {
+export interface SplatBounds {
   center: [number, number, number];
   radius: number;
 }
@@ -77,7 +77,7 @@ interface SplatData {
 // object cluster, ignoring far background) and a small multiple of the MEDIAN
 // radial distance as the framing radius (the dense core), so the camera frames
 // the object and lets the sparse background fall outside the view.
-function useSplatData(src: string): SplatData | null {
+export function useSplatData(src: string): SplatData | null {
   const [data, setData] = useState<SplatData | null>(null);
 
   useEffect(() => {
@@ -191,7 +191,7 @@ function findSurfacePoint(
 }
 
 // The rendered center accounts for drei's 180°-about-X load flip (Y/Z negated).
-function renderedCenter(bounds: SplatBounds | null): Vector3 {
+export function renderedCenter(bounds: SplatBounds | null): Vector3 {
   if (!bounds) return new Vector3(0, 0, 0);
   return new Vector3(bounds.center[0], -bounds.center[1], -bounds.center[2]);
 }

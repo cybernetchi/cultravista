@@ -19,7 +19,8 @@ import {
   ChevronLeft,
   ChevronRight,
   MapPin as MapPinIcon,
-  Crop
+  Crop,
+  Trash2
 } from "lucide-react";
 // (MoreHorizontal removed with the fake stats/actions cleanup)
 import { Button } from "@/components/ui/button";
@@ -131,6 +132,24 @@ export function WebDetailPanel({ scan, onClose, onEdit, onAnnotate, onCrop }: We
   const copy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     toast.success(`${label} copied`);
+  };
+
+  // ---- Delete ----
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  const handleDelete = async () => {
+    setDeleteBusy(true);
+    const res = await CaptureService.deleteCapture(scan.id);
+    setDeleteBusy(false);
+    if (!res.success) {
+      toast.error(res.error || "Failed to delete scan");
+      return;
+    }
+    setDeleteOpen(false);
+    queryClient.invalidateQueries({ queryKey: ["captures"] });
+    toast.success("Scan deleted");
+    onClose(); // back to the library
   };
 
   // Whether Traditional Chinese content exists to offer a language toggle.
@@ -450,6 +469,42 @@ export function WebDetailPanel({ scan, onClose, onEdit, onAnnotate, onCrop }: We
                 Download
               </Button>
             </div>
+
+            {/* Delete (destructive, confirmed) */}
+            <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="w-full gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete scan
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Delete this scan?</DialogTitle>
+                  <DialogDescription>
+                    “{scan.title}” and its 3D model will be permanently removed. This
+                    can’t be undone.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleteBusy}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    className="gap-2"
+                    onClick={handleDelete}
+                    disabled={deleteBusy}
+                  >
+                    {deleteBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                    Delete
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 // Capture service using Supabase Database
 import { supabase } from '@/integrations/supabase/client';
 import { resolveOwnerAndOrg } from './orgContext';
+import type { Scan } from '@/types/scan';
 
 export interface Capture {
   id: string;
@@ -132,6 +133,34 @@ export class CaptureService {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to update capture',
+      };
+    }
+  }
+
+  // Delete a capture. RLS only permits this for an owner/admin of the capture's
+  // org, so an unauthorized call returns 0 rows (surfaced here as an error).
+  static async deleteCapture(id: string): Promise<ApiResponse<null>> {
+    try {
+      const { data, error } = await supabase
+        .from('captures')
+        .delete()
+        .eq('id', id)
+        .select('id');
+
+      if (error) {
+        console.error('Error deleting capture:', error);
+        return { success: false, error: error.message };
+      }
+      if (!data || data.length === 0) {
+        return { success: false, error: "You don't have permission to delete this scan." };
+      }
+
+      return { success: true, data: null };
+    } catch (error) {
+      console.error('Error deleting capture:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to delete capture',
       };
     }
   }
@@ -275,4 +304,37 @@ export function deliverySplatUrl(
   if (c.file) return c.file;
   if (c.folder_path) return `${c.folder_path}/output.splat`;
   return undefined;
+}
+
+// Map a DB capture row to the UI `Scan` shape. Shared by the Library and Profile
+// so both render the same real data.
+export function captureToScan(capture: Capture): Scan {
+  return {
+    id: capture.id,
+    title: capture.title,
+    author: "User",
+    authorHandle: "@user",
+    thumbnail: capture.thumbnail || "/placeholder.svg",
+    createdAt: new Date(capture.created_at),
+    splatUrl: deliverySplatUrl(capture),
+    status: capture.status, // 0=processing, 1=complete, 2=failed
+    folderPath: capture.folder_path || undefined,
+    // PR2 archival metadata
+    titleZhHant: capture.title_zh_hant,
+    description: capture.description,
+    descriptionZhHant: capture.description_zh_hant,
+    captureDate: capture.capture_date,
+    locationText: capture.location_text,
+    lat: capture.lat,
+    lng: capture.lng,
+    rightsLicense: capture.rights_license,
+    attribution: capture.attribution,
+    tags: capture.tags,
+    source: capture.source,
+    location: capture.location_text || undefined,
+    published: capture.published,
+    slug: capture.slug,
+    plyUrl: capture.ply_url,
+    spzUrl: capture.spz_url,
+  };
 }
