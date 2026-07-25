@@ -22,12 +22,18 @@ async function processConversion(s3Url: string, captureId: string) {
     // Call AWS Lambda for conversion (this takes 2-3 minutes)
     console.log('Calling Lambda for PLY to Splat conversion:', s3Url);
     
+    // Bounded wait: Supabase edge functions kill background tasks at ~400s
+    // wall clock, and an abruptly-closed Lambda connection can leave fetch
+    // hanging — either way the catch below would never run and the capture
+    // would be stranded at "Processing" forever. Abort in time to guarantee
+    // the failure update still gets written.
     const response = await fetch(LAMBDA_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ s3_url: s3Url }),
+      signal: AbortSignal.timeout(330_000),
     });
 
     const data = await response.json();
