@@ -17,6 +17,7 @@ import { WebScanCard } from "./WebScanCard";
 import { Scan } from "@/types/scan";
 import { CaptureService, Capture, captureToScan, viewerIdentity } from "@/services/captureService";
 import { useAuth } from "@/contexts/AuthContext";
+import { useResumeStalledKiri } from "@/hooks/useCapture";
 import { cn } from "@/lib/utils";
 
 interface WebLibraryViewProps {
@@ -65,6 +66,10 @@ export function WebLibraryView({ onSelectScan, searchQuery }: WebLibraryViewProp
       return hasProcessing ? 5000 : false;
     },
   });
+
+  // Rescue KIRI captures whose client-driven pipeline was interrupted
+  // (create modal closed mid-run) — otherwise they show "Processing" forever.
+  useResumeStalledKiri(captures);
 
   const viewer = viewerIdentity(user);
   const scans = captures?.map((c) => captureToScan(c, viewer)) || [];

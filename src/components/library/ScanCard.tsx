@@ -98,12 +98,14 @@ export function ScanCard({ capture, onClick, onDelete, index }: ScanCardProps) {
       )}
     </button>
 
-    {/* Delete for failed captures — sibling of the card button, above it. */}
-    {isFailed && onDelete && (
+    {/* Delete for failed or stuck-processing captures — sibling of the card
+        button, above it. Interrupted uploads can leave rows processing
+        forever; the parent's confirm dialog guards misclicks. */}
+    {(isFailed || isProcessing) && onDelete && (
       <button
         type="button"
         onClick={onDelete}
-        aria-label={`Delete failed capture ${capture.title}`}
+        aria-label={`Delete ${isFailed ? "failed" : "processing"} capture ${capture.title}`}
         className={cn(
           "absolute top-2 right-2 z-30",
           "flex h-9 w-9 items-center justify-center rounded-lg",

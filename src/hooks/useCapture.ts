@@ -2,7 +2,7 @@
 import React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { KiriService } from '@/services/kiriService';
-import { CaptureService } from '@/services/captureService';
+import { CaptureService, type Capture } from '@/services/captureService';
 import { StorageService } from '@/services/storageService';
 import type { ModelKind } from '@/lib/uploadValidation';
 
@@ -312,6 +312,77 @@ export const useUploadedCapturePoll = (captureId: string | null, enabled: boolea
     isComplete: status === 1,
     isFailed: status === 2,
   };
+};
+
+// The KIRI→Lambda handoff is client-driven: if the user closes the create
+// modal (web unmounts it) or reloads the tab mid-run, nobody ever fetches the
+// finished model from KIRI and the row stays "Processing" forever. This hook,
+// mounted by the library views, rescues such rows: for each stalled KIRI
+// capture it asks KIRI once per session what actually happened — successful →
+// fetch the model zip and trigger the Lambda conversion; failed/expired →
+// mark the row failed so it can be deleted.
+const resumeAttempted = new Set<string>();
+
+export const useResumeStalledKiri = (captures: Capture[] | undefined) => {
+  const queryClient = useQueryClient();
+
+  React.useEffect(() => {
+    if (!captures?.length) return;
+    // Fresh rows are still being driven by an open create modal — only rows
+    // older than this are considered abandoned.
+    const STALE_MS = 3 * 60 * 1000;
+    const stalled = captures.filter(
+      (c) =>
+        c.status === 0 &&
+        c.source === 'kiri' &&
+        !!c.serialize &&
+        !resumeAttempted.has(c.id) &&
+        Date.now() - new Date(c.created_at).getTime() > STALE_MS
+    );
+    if (!stalled.length) return;
+    stalled.forEach((c) => resumeAttempted.add(c.id));
+
+    (async () => {
+      let changed = false;
+      for (const c of stalled) {
+        try {
+          const statusResult = await KiriService.getStatus(c.serialize!);
+          if (!statusResult.success) {
+            resumeAttempted.delete(c.id); // transient — retry on next mount
+            continue;
+          }
+          // KIRI codes: -1 uploading, 0 processing, 1 failed, 2 successful,
+          // 3 queuing, 4 expired.
+          const kiriStatus = statusResult.data?.status;
+          if (kiriStatus === 2) {
+            const zip = await KiriService.getModelZip(c.serialize!);
+            const modelUrl = zip.data?.modelUrl || zip.data?.splatUrl;
+            if (!modelUrl) {
+              resumeAttempted.delete(c.id);
+              continue;
+            }
+            await KiriService.convertPlyToSplat(modelUrl as string, c.id);
+            changed = true;
+            console.log('Resumed stalled KIRI capture:', c.id);
+          } else if (kiriStatus === 1 || kiriStatus === 4) {
+            await CaptureService.updateCapture(c.id, { status: 2 });
+            changed = true;
+          }
+          // Still uploading/processing/queuing on KIRI's side: leave it and
+          // let a later library visit check again.
+          if (kiriStatus === -1 || kiriStatus === 0 || kiriStatus === 3) {
+            resumeAttempted.delete(c.id);
+          }
+        } catch (err) {
+          console.warn('Failed to resume stalled KIRI capture:', c.id, err);
+          resumeAttempted.delete(c.id);
+        }
+      }
+      if (changed) {
+        queryClient.invalidateQueries({ queryKey: ['captures'] });
+      }
+    })();
+  }, [captures, queryClient]);
 };
 
 // KIRI status polling hook

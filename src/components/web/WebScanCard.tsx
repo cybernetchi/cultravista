@@ -42,18 +42,20 @@ export function WebScanCard({ scan, onClick, onDelete, viewMode, index }: WebSca
     year: "numeric",
   });
 
-  // Failed scans never reach the detail panel, so the card carries its own
-  // delete affordance. stopPropagation keeps the card's (no-op) click quiet.
+  // Failed and stuck-processing scans never reach the detail panel, so the
+  // card carries its own delete affordance (an interrupted upload/capture can
+  // leave a row processing forever — the confirm dialog guards misclicks).
+  // stopPropagation keeps the card's (no-op) click quiet.
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     onDelete?.();
   };
 
-  const deleteButton = isFailed && onDelete && (
+  const deleteButton = (isFailed || isProcessing) && onDelete && (
     <button
       type="button"
       onClick={handleDeleteClick}
-      aria-label={`Delete failed scan ${scan.title}`}
+      aria-label={`Delete ${isFailed ? "failed" : "processing"} scan ${scan.title}`}
       className={cn(
         "flex h-8 w-8 items-center justify-center rounded-lg",
         "bg-black/60 text-red-400 backdrop-blur-sm",

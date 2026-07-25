@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ScanCard } from "./ScanCard";
 import { CaptureService, Capture } from "@/services/captureService";
+import { useResumeStalledKiri } from "@/hooks/useCapture";
 import { cn } from "@/lib/utils";
 
 interface LibraryViewProps {
@@ -64,6 +65,10 @@ export function LibraryView({ onSelectCapture, onStartCapture }: LibraryViewProp
       return hasProcessing ? 5000 : false;
     },
   });
+
+  // Rescue KIRI captures whose client-driven pipeline was interrupted
+  // (capture view unmounted mid-run) — otherwise they show "Processing" forever.
+  useResumeStalledKiri(captures);
 
   // Search real titles (English + Traditional Chinese when present).
   const q = searchQuery.trim().toLowerCase();

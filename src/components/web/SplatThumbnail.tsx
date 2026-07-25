@@ -177,7 +177,10 @@ function CaptureScene({
 
     const tick = setInterval(() => {
       if (capturedRef.current) return;
-      const timedOut = Date.now() - start > 12000;
+      // Generous window: directly-uploaded splats (PR8) can be 60MB+ and are
+      // fetched through the CORS proxy — download+parse alone can exceed the
+      // old 12s budget that was tuned for smaller KIRI outputs.
+      const timedOut = Date.now() - start > 55000;
       if (framedRef.current) {
         gl.render(scene, camera);
         if (frameHasContent()) {
@@ -279,7 +282,8 @@ export function SplatThumbnail({ splatUrl, fallbackImage, captureId, className }
   // late is harmless.
   useEffect(() => {
     if (!isCapturing) return;
-    const t = setTimeout(() => handleFail(), 15000);
+    // Must outlast CaptureScene's 55s content window (large PR8 uploads).
+    const t = setTimeout(() => handleFail(), 60000);
     return () => clearTimeout(t);
   }, [isCapturing, handleFail]);
 
