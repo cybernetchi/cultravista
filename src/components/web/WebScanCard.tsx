@@ -1,16 +1,18 @@
 import { Scan } from "@/types/scan";
 import { cn } from "@/lib/utils";
-import { Calendar, MapPin, Loader2 } from "lucide-react";
+import { Calendar, MapPin, Loader2, Trash2 } from "lucide-react";
 import { SplatThumbnail } from "./SplatThumbnail";
 
 interface WebScanCardProps {
   scan: Scan;
   onClick: () => void;
+  /** Asks the parent to confirm + delete. Shown on failed scans, which can't open the detail panel. */
+  onDelete?: () => void;
   viewMode: "grid" | "list";
   index: number;
 }
 
-export function WebScanCard({ scan, onClick, viewMode, index }: WebScanCardProps) {
+export function WebScanCard({ scan, onClick, onDelete, viewMode, index }: WebScanCardProps) {
   // Processing state: status 0 = processing, or status 1 complete but no folderPath yet
   const isProcessing = scan.status === 0 || (scan.status === 1 && !scan.folderPath);
   const isFailed = scan.status === 2;
@@ -34,6 +36,28 @@ export function WebScanCard({ scan, onClick, viewMode, index }: WebScanCardProps
     day: "numeric",
     year: "numeric",
   });
+
+  // Failed scans never reach the detail panel, so the card carries its own
+  // delete affordance. stopPropagation keeps the card's (no-op) click quiet.
+  const handleDeleteClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDelete?.();
+  };
+
+  const deleteButton = isFailed && onDelete && (
+    <button
+      type="button"
+      onClick={handleDeleteClick}
+      aria-label={`Delete failed scan ${scan.title}`}
+      className={cn(
+        "flex h-8 w-8 items-center justify-center rounded-lg",
+        "bg-black/60 text-red-400 backdrop-blur-sm",
+        "hover:bg-red-500/20 hover:text-red-300 transition-colors"
+      )}
+    >
+      <Trash2 className="h-4 w-4" />
+    </button>
+  );
 
   const renderThumbnail = (className: string) => {
     // Completed scans render a live snapshot of the actual 3D model; processing/
@@ -97,7 +121,9 @@ export function WebScanCard({ scan, onClick, viewMode, index }: WebScanCardProps
               </span>
             )}
           </div>
-          <p className="text-sm text-muted-foreground mt-1">{scan.authorHandle}</p>
+          {scan.authorHandle && (
+            <p className="text-sm text-muted-foreground mt-1">{scan.authorHandle}</p>
+          )}
           <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
               <Calendar className="w-3 h-3" />
@@ -111,6 +137,8 @@ export function WebScanCard({ scan, onClick, viewMode, index }: WebScanCardProps
             )}
           </div>
         </div>
+
+        {deleteButton && <div className="shrink-0">{deleteButton}</div>}
       </div>
     );
   }
@@ -150,6 +178,11 @@ export function WebScanCard({ scan, onClick, viewMode, index }: WebScanCardProps
             </div>
           </div>
         )}
+
+        {/* Delete for failed scans, above the status overlay. */}
+        {deleteButton && (
+          <div className="absolute top-2 right-2 z-20">{deleteButton}</div>
+        )}
       </div>
 
       {/* Content */}
@@ -158,8 +191,10 @@ export function WebScanCard({ scan, onClick, viewMode, index }: WebScanCardProps
           {scan.title}
         </h3>
         <div className="flex items-center justify-between mt-1">
-          <p className="text-sm text-muted-foreground">{scan.authorHandle}</p>
-          <span className="text-xs text-muted-foreground">{formattedDate}</span>
+          {scan.authorHandle && (
+            <p className="text-sm text-muted-foreground">{scan.authorHandle}</p>
+          )}
+          <span className="ml-auto text-xs text-muted-foreground">{formattedDate}</span>
         </div>
       </div>
 

@@ -96,7 +96,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase.auth.signUp({
         email,
         password,
-        options: { emailRedirectTo: `${window.location.origin}/` },
+        // "/" is the public landing page (PR7) — confirmed users belong in the app.
+        options: { emailRedirectTo: `${window.location.origin}/app` },
       });
       return { error: error?.message ?? null };
     },
@@ -106,7 +107,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signInWithGoogle = useCallback(async (): Promise<AuthResult> => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${window.location.origin}/` },
+      // Land OAuth returns on the app, not the public landing page (PR7).
+      options: { redirectTo: `${window.location.origin}/app` },
     });
     return { error: error?.message ?? null };
   }, []);

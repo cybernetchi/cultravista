@@ -1,7 +1,7 @@
 // Sign-in / sign-up screen. Email+password (tabbed) plus Google OAuth.
 // Dark theme, responsive, with explicit loading + error states.
 import { useState } from "react";
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -21,16 +21,21 @@ type Mode = "signin" | "signup";
 export default function Auth() {
   const { session, loading, signIn, signUp, signInWithGoogle } = useAuth();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
 
-  const [mode, setMode] = useState<Mode>("signin");
+  // Landing-page CTAs deep-link to /auth?mode=signup; tabs take over afterwards.
+  const [mode, setMode] = useState<Mode>(
+    searchParams.get("mode") === "signup" ? "signup" : "signin"
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Where to send the user after a successful sign-in.
-  const from = (location.state as { from?: Location } | null)?.from?.pathname ?? "/";
+  // Where to send the user after a successful sign-in. "/" is now the public
+  // landing page (PR7), so the app itself lives at /app.
+  const from = (location.state as { from?: Location } | null)?.from?.pathname ?? "/app";
 
   // Already signed in (e.g. returning via OAuth redirect) — bounce to the app.
   if (!loading && session) {

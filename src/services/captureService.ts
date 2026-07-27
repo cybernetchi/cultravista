@@ -73,6 +73,12 @@ interface ApiResponse<T> {
   error?: string;
 }
 
+// Lightweight summary of a published exhibit for public surfaces (landing demo).
+export type PublishedCaptureSummary = Pick<
+  Capture,
+  'id' | 'slug' | 'title' | 'title_zh_hant' | 'description' | 'description_zh_hant' | 'thumbnail'
+>;
+
 export class CaptureService {
   // Create new capture
   static async createCapture(data: CaptureInsert): Promise<ApiResponse<Capture>> {
@@ -268,6 +274,29 @@ export class CaptureService {
       };
     }
   }
+
+  // Anon-safe list of published exhibits for public surfaces (landing demo).
+  // The PR4 RLS policy "Public can view published captures" permits this SELECT
+  // without a session. Newest first; only slugged rows are embeddable.
+  static async getPublishedCaptures(limit = 2): Promise<ApiResponse<PublishedCaptureSummary[]>> {
+    try {
+      const { data, error } = await supabase
+        .from('captures')
+        .select('id, slug, title, title_zh_hant, description, description_zh_hant, thumbnail')
+        .eq('published', true)
+        .not('slug', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, data: data ?? [] };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to load exhibits',
+      };
+    }
+  }
 }
 
 // Build a URL-safe slug from a title (lowercase, hyphenated, ASCII-ish).
@@ -306,14 +335,42 @@ export function deliverySplatUrl(
   return undefined;
 }
 
+// Identity of the signed-in viewer, used to attribute their own captures.
+export interface ViewerIdentity {
+  id: string;
+  name: string;
+  handle: string;
+}
+
+// Derive a ViewerIdentity from a Supabase auth user (same rules as the profile
+// views: OAuth full name first, then the email local-part).
+export function viewerIdentity(
+  user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> } | null | undefined
+): ViewerIdentity | undefined {
+  if (!user) return undefined;
+  const emailName = user.email ? user.email.split('@')[0] : '';
+  const name =
+    (user.user_metadata?.full_name as string | undefined) ||
+    (user.user_metadata?.name as string | undefined) ||
+    emailName;
+  return {
+    id: user.id,
+    name: name || 'You',
+    handle: emailName ? `@${emailName}` : '',
+  };
+}
+
 // Map a DB capture row to the UI `Scan` shape. Shared by the Library and Profile
-// so both render the same real data.
-export function captureToScan(capture: Capture): Scan {
+// so both render the same real data. Attribution is only shown for captures the
+// viewer owns — RLS hides other members' profiles, so rather than showing a
+// dummy handle for their captures we show nothing.
+export function captureToScan(capture: Capture, viewer?: ViewerIdentity): Scan {
+  const isOwn = !!viewer && capture.owner_id === viewer.id;
   return {
     id: capture.id,
     title: capture.title,
-    author: "User",
-    authorHandle: "@user",
+    author: isOwn ? viewer.name : "",
+    authorHandle: isOwn ? viewer.handle : "",
     thumbnail: capture.thumbnail || "/placeholder.svg",
     createdAt: new Date(capture.created_at),
     splatUrl: deliverySplatUrl(capture),
