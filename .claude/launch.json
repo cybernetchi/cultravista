@@ -9,13 +9,6 @@
       "autoPort": true
     },
     {
-      "name": "dev-node",
-      "runtimeExecutable": "C:\\Users\\cybernetchi\\AppData\\Local\\ms-playwright-go\\1.57.0\\node.exe",
-      "runtimeArgs": ["node_modules/vite/bin/vite.js"],
-      "port": 8080,
-      "autoPort": true
-    },
-    {
       "name": "preview",
       "runtimeExecutable": "bun",
       "runtimeArgs": ["run", "preview"],
