@@ -33,11 +33,13 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { GaussianSplatViewer } from "./GaussianSplatViewer";
+import { USER_SNAP_MARKER } from "./SplatThumbnail";
 import { AnnotationService } from "@/services/annotationService";
 import { CaptureService } from "@/services/captureService";
+import { StorageService } from "@/services/storageService";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
-import { Loader2, Copy, Globe } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Loader2, Copy, Globe, Camera } from "lucide-react";
 import { toast } from "sonner";
 
 interface WebDetailPanelProps {
@@ -134,6 +136,39 @@ export function WebDetailPanel({ scan, onClose, onEdit, onAnnotate, onCrop }: We
     toast.success(`${label} copied`);
   };
 
+  // ---- Manual thumbnail capture ----
+  // The viewer registers a getter that snapshots its current frame; clicking
+  // "Thumbnail" uploads that frame and points the capture's thumbnail at it.
+  const snapshotRef = useRef<(() => string | null) | null>(null);
+  const registerSnapshot = useCallback((getter: () => string | null) => {
+    snapshotRef.current = getter;
+  }, []);
+  const [thumbBusy, setThumbBusy] = useState(false);
+
+  const handleCaptureThumbnail = async () => {
+    const dataUrl = snapshotRef.current?.();
+    if (!dataUrl) {
+      toast.error("Viewer not ready yet — wait for the model to load");
+      return;
+    }
+    setThumbBusy(true);
+    try {
+      const blob = await (await fetch(dataUrl)).blob();
+      // Stable filename (upsert) + version query so <img> caches never go stale.
+      const up = await StorageService.uploadThumbnail(blob, `user-snap-${scan.id}.jpg`);
+      if (!up.success || !up.url) throw new Error(up.error || "Upload failed");
+      const url = `${up.url}?v=${Date.now()}${USER_SNAP_MARKER}`;
+      const res = await CaptureService.updateCapture(scan.id, { thumbnail: url });
+      if (!res.success) throw new Error(res.error || "Could not save thumbnail");
+      queryClient.invalidateQueries({ queryKey: ["captures"] });
+      toast.success("Thumbnail updated to this view");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to set thumbnail");
+    } finally {
+      setThumbBusy(false);
+    }
+  };
+
   // ---- Delete ----
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -214,6 +249,24 @@ export function WebDetailPanel({ scan, onClose, onEdit, onAnnotate, onCrop }: We
                   </Button>
                 </div>
               )}
+              {/* Capture the current 3D view as the library thumbnail. */}
+              {scan.splatUrl && viewMode === "3d" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-3 gap-1.5"
+                  onClick={handleCaptureThumbnail}
+                  disabled={thumbBusy}
+                  title="Use the current camera angle as this scan's thumbnail"
+                >
+                  {thumbBusy ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Camera className="w-3.5 h-3.5" />
+                  )}
+                  Thumbnail
+                </Button>
+              )}
             </div>
             <Button variant="ghost" size="icon" onClick={onClose} className="md:hidden">
               <X className="w-5 h-5" />
@@ -235,6 +288,7 @@ export function WebDetailPanel({ scan, onClose, onEdit, onAnnotate, onCrop }: We
                   setSelectedAnnotationId(id);
                 }}
                 tourIndex={tourIndex}
+                onSnapshotRef={registerSnapshot}
               />
             ) : (
               <div className="absolute inset-0 flex items-center justify-center p-8">

@@ -28,6 +28,11 @@ interface SplatThumbnailProps {
 // avoid re-uploading on every cold-cache render.
 const SNAP_MARKER = "#cv-model-snap";
 
+// Marker for thumbnails the curator captured manually from the viewer ("capture
+// thumbnail" in the detail panel). A user-chosen angle must never be replaced
+// by an automatic snapshot, so tiles render it as-is and skip capture entirely.
+export const USER_SNAP_MARKER = "#cv-user-snap";
+
 // Cache captured thumbnails by URL — in memory for this session, and in
 // localStorage so revisits (and the other layout, web/mobile) show the model
 // snapshot instantly instead of re-rendering it. Keyed by the splat URL, so an
@@ -210,8 +215,13 @@ export function SplatThumbnail({ splatUrl, fallbackImage, captureId, className }
   const loadUrl = resolveSplatUrl(splatUrl);
   const queryClient = useQueryClient();
 
+  // A manually captured thumbnail (curator-chosen angle) wins outright: no
+  // auto-capture, and the local cache (which may hold an older auto snap for
+  // this splat URL) is ignored.
+  const isManual = !!fallbackImage?.includes(USER_SNAP_MARKER);
+
   const [cachedThumbnail, setCachedThumbnail] = useState<string | null>(
-    () => readCachedThumbnail(splatUrl)
+    () => (isManual ? null : readCachedThumbnail(splatUrl))
   );
   const [isCapturing, setIsCapturing] = useState(false);
   // Capture failed (lost context / timeout): show the static image, no spinner.
@@ -225,7 +235,7 @@ export function SplatThumbnail({ splatUrl, fallbackImage, captureId, className }
   // thumbnail at it (marked), unless the stored thumbnail already is one.
   const persistSnapshot = useCallback(
     async (dataUrl: string) => {
-      if (!captureId || fallbackImage?.includes(SNAP_MARKER)) return;
+      if (!captureId || fallbackImage?.includes(SNAP_MARKER) || fallbackImage?.includes(USER_SNAP_MARKER)) return;
       try {
         const blob = await (await fetch(dataUrl)).blob();
         const up = await StorageService.uploadThumbnail(blob, `model-snap-${captureId}.jpg`);
@@ -260,7 +270,7 @@ export function SplatThumbnail({ splatUrl, fallbackImage, captureId, className }
   // releases any slot we still hold, so an unmount mid-queue or mid-capture
   // (user navigates away) can never wedge the queue.
   useEffect(() => {
-    if (cachedThumbnail) return;
+    if (cachedThumbnail || isManual) return;
     const thunk: CaptureThunk = (token) => {
       tokenRef.current = token;
       setIsCapturing(true);
@@ -286,6 +296,23 @@ export function SplatThumbnail({ splatUrl, fallbackImage, captureId, className }
     const t = setTimeout(() => handleFail(), 60000);
     return () => clearTimeout(t);
   }, [isCapturing, handleFail]);
+
+  // Manual thumbnail: just show it — full strength, no spinner, no capture.
+  if (isManual && fallbackImage) {
+    return (
+      <div className={`relative ${className}`}>
+        <img
+          src={fallbackImage}
+          alt="Model thumbnail"
+          className="absolute inset-0 w-full h-full object-cover"
+          onError={(e) => {
+            const img = e.currentTarget;
+            if (!img.src.endsWith("/placeholder.svg")) img.src = "/placeholder.svg";
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className={`relative ${className}`}>

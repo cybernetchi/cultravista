@@ -37,6 +37,9 @@ interface GaussianSplatViewerProps {
   tourIndex?: number | null;
   /** Receives the current camera pose (for "set camera view"). */
   onCameraPoseRef?: (getter: () => Annotation["cameraPose"]) => void;
+  /** Receives a getter that snapshots the current frame as a JPEG data URL
+      (for "capture thumbnail"). Returns null if the canvas isn't ready. */
+  onSnapshotRef?: (getter: () => string | null) => void;
   /** Crop mode: the live box to draw (rendered-space min/max). */
   cropBox?: { min: [number, number, number]; max: [number, number, number] } | null;
   /** Crop mode: called when a face handle is dragged to resize the box. */
@@ -440,6 +443,34 @@ function TourController({
   return null;
 }
 
+// Exposes a getter that captures the canvas as a JPEG data URL. The canvas is
+// created without preserveDrawingBuffer (a per-frame cost we don't want), so
+// the getter re-renders synchronously right before reading pixels — the buffer
+// is guaranteed valid inside that same task.
+function SnapshotProbe({
+  onReady,
+}: {
+  onReady: (getter: () => string | null) => void;
+}) {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  const camera = useThree((s) => s.camera);
+
+  useEffect(() => {
+    onReady(() => {
+      try {
+        gl.render(scene, camera);
+        return gl.domElement.toDataURL("image/jpeg", 0.9);
+      } catch (error) {
+        console.error("Viewer snapshot failed:", error);
+        return null;
+      }
+    });
+  }, [gl, scene, camera, onReady]);
+
+  return null;
+}
+
 // Exposes a getter for the current camera pose (used by "set camera view").
 function CameraPoseProbe({
   onReady,
@@ -693,6 +724,7 @@ function SplatScene({
   onPlacePoint,
   tourIndex,
   onCameraPoseRef,
+  onSnapshotRef,
   cropBox,
   onCropBoxChange,
   onReady,
@@ -705,6 +737,7 @@ function SplatScene({
   onPlacePoint?: (p: [number, number, number]) => void;
   tourIndex?: number | null;
   onCameraPoseRef?: (getter: () => Annotation["cameraPose"]) => void;
+  onSnapshotRef?: (getter: () => string | null) => void;
   cropBox?: { min: [number, number, number]; max: [number, number, number] } | null;
   onCropBoxChange?: (b: { min: [number, number, number]; max: [number, number, number] }) => void;
   onReady?: () => void;
@@ -747,6 +780,7 @@ function SplatScene({
       <CameraRig bounds={bounds} />
       <TourController annotations={annotations} tourIndex={tourIndex} bounds={bounds} />
       {onCameraPoseRef && <CameraPoseProbe onReady={onCameraPoseRef} />}
+      {onSnapshotRef && <SnapshotProbe onReady={onSnapshotRef} />}
       <ambientLight intensity={0.6} />
       <directionalLight position={[10, 10, 5]} intensity={1} />
       <group visible={ready}>
@@ -788,6 +822,7 @@ export function GaussianSplatViewer({
   onPlacePoint,
   tourIndex = null,
   onCameraPoseRef,
+  onSnapshotRef,
   cropBox,
   onCropBoxChange,
 }: GaussianSplatViewerProps) {
@@ -847,6 +882,7 @@ export function GaussianSplatViewer({
             onPlacePoint={onPlacePoint}
             tourIndex={tourIndex}
             onCameraPoseRef={onCameraPoseRef}
+            onSnapshotRef={onSnapshotRef}
             cropBox={cropBox}
             onCropBoxChange={onCropBoxChange}
             onReady={handleSceneReady}
