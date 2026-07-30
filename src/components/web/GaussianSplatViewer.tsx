@@ -16,8 +16,9 @@ import {
   DoubleSide,
 } from "three";
 import { Button } from "@/components/ui/button";
-import { Maximize2, Minimize2, Move3D, Eye, ZoomIn, Loader2 } from "lucide-react";
+import { Maximize2, Minimize2, Move3D, Eye, ZoomIn, Loader2, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { Annotation } from "@/types/scan";
 
 interface GaussianSplatViewerProps {
@@ -800,6 +801,12 @@ export function GaussianSplatViewer({
   // SplatScene's `ready`), not on a fixed timer.
   const handleSceneReady = useCallback(() => setIsLoading(false), []);
 
+  // A splat that fails to fetch/parse throws through Suspense during render;
+  // the boundary below swaps the canvas for an in-frame error state — without
+  // it the error would unmount the entire app. Lift the loading overlay too,
+  // or it would sit on top of the error message forever.
+  const handleSceneError = useCallback(() => setIsLoading(false), []);
+
   return (
     <div className={cn(
       "relative bg-background border border-border rounded-lg overflow-hidden",
@@ -831,27 +838,41 @@ export function GaussianSplatViewer({
         </div>
       )}
 
-      {/* Canvas */}
+      {/* Canvas — keyed by src so a tripped boundary resets when the model changes. */}
       <div className="w-full h-full min-h-[400px]">
         {isLoading && <LoadingOverlay />}
-        <Canvas
-          gl={{ antialias: true, alpha: true }}
-          className="w-full h-full"
+        <ErrorBoundary
+          key={src}
+          onError={handleSceneError}
+          fallback={
+            <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center gap-3 p-6 text-center">
+              <AlertTriangle className="w-8 h-8 text-destructive" />
+              <p className="text-sm font-medium text-foreground">This 3D model could not be loaded</p>
+              <p className="text-xs text-muted-foreground">
+                The file may be missing, moved, or corrupted.
+              </p>
+            </div>
+          }
         >
-          <SplatScene
-            src={src}
-            annotations={annotations}
-            mode={mode}
-            selectedId={selectedId}
-            onSelectAnnotation={onSelectAnnotation}
-            onPlacePoint={onPlacePoint}
-            tourIndex={tourIndex}
-            onCameraPoseRef={onCameraPoseRef}
-            cropBox={cropBox}
-            onCropBoxChange={onCropBoxChange}
-            onReady={handleSceneReady}
-          />
-        </Canvas>
+          <Canvas
+            gl={{ antialias: true, alpha: true }}
+            className="w-full h-full"
+          >
+            <SplatScene
+              src={src}
+              annotations={annotations}
+              mode={mode}
+              selectedId={selectedId}
+              onSelectAnnotation={onSelectAnnotation}
+              onPlacePoint={onPlacePoint}
+              tourIndex={tourIndex}
+              onCameraPoseRef={onCameraPoseRef}
+              cropBox={cropBox}
+              onCropBoxChange={onCropBoxChange}
+              onReady={handleSceneReady}
+            />
+          </Canvas>
+        </ErrorBoundary>
       </div>
 
       {/* Controls hint — touch wording on phones, mouse wording on larger screens */}

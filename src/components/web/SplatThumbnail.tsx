@@ -4,6 +4,7 @@ import { Splat, PerspectiveCamera } from "@react-three/drei";
 import { useQueryClient } from "@tanstack/react-query";
 import { StorageService } from "@/services/storageService";
 import { CaptureService } from "@/services/captureService";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import {
   resolveSplatUrl,
   useSplatData,
@@ -321,19 +322,25 @@ export function SplatThumbnail({ splatUrl, fallbackImage, captureId, className }
         </div>
       )}
 
-      {/* Offscreen render that produces the snapshot, then unmounts. */}
+      {/* Offscreen render that produces the snapshot, then unmounts. The
+          boundary is essential: a splat that fails to fetch/parse throws
+          through Suspense during render, and without it that single bad tile
+          would unmount the ENTIRE app (black page). Instead we fail over to
+          the static image like any other capture failure. */}
       {isCapturing && !cachedThumbnail && !failed && (
-        <Canvas
-          className="!absolute inset-0 opacity-0 pointer-events-none"
-          gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
-        >
-          <SplatPreviewInner
-            splatUrl={loadUrl}
-            rawUrl={splatUrl}
-            onCapture={handleCapture}
-            onFail={handleFail}
-          />
-        </Canvas>
+        <ErrorBoundary fallback={null} onError={handleFail}>
+          <Canvas
+            className="!absolute inset-0 opacity-0 pointer-events-none"
+            gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
+          >
+            <SplatPreviewInner
+              splatUrl={loadUrl}
+              rawUrl={splatUrl}
+              onCapture={handleCapture}
+              onFail={handleFail}
+            />
+          </Canvas>
+        </ErrorBoundary>
       )}
     </div>
   );

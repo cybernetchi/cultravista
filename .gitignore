@@ -36,3 +36,5 @@ public/splat/samples/
 
 # Supabase CLI local artifacts
 supabase/.temp/
+.vercel
+.env*
